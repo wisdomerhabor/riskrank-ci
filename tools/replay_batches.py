@@ -22,8 +22,15 @@ UPSTREAM_CLONE = "data/repos/pallets/flask"
 FORK_COMMIT = "b78b5a21"
 
 
-def sh(*args: str, cwd: str | None = None) -> str:
-    return subprocess.run(args, capture_output=True, text=True, check=True, cwd=cwd).stdout.strip()
+def sh(*args: str, cwd: str | None = None, tries: int = 4) -> str:
+    """Run a command; GitHub API calls through `gh` can fail transiently, so retry with a pause."""
+    for attempt in range(1, tries + 1):
+        p = subprocess.run(args, capture_output=True, text=True, cwd=cwd)
+        if p.returncode == 0:
+            return p.stdout.strip()
+        print(f"attempt {attempt} failed: {' '.join(args[:3])}: {p.stderr.strip()[:300]}", flush=True)
+        time.sleep(20 * attempt)
+    raise subprocess.CalledProcessError(p.returncode, args, p.stdout, p.stderr)
 
 
 def batches() -> list[str]:
