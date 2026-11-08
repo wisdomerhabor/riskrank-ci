@@ -22,12 +22,21 @@ Offline comparators only; never deployed (Table 3.6).
 
 from __future__ import annotations
 
+import os
+
+# One thread per numerical library in every process, set before NumPy loads: eight workers each
+# starting their own BLAS/OpenMP pool oversubscribes the CPU, and threaded reductions can change the
+# last digits of a result, which would break exact reproducibility from the seed.
+THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+               "NUMEXPR_NUM_THREADS")
+for _v in THREAD_VARS:
+    os.environ[_v] = "1"
+
 import argparse
 import csv
 import itertools
 import json
 import math
-import os
 import platform
 import time
 import warnings
@@ -40,6 +49,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score, brier_score_loss, matthews_corrcoef, roc_auc_score
 from sklearn.model_selection import RepeatedStratifiedKFold, StratifiedShuffleSplit
+from threadpoolctl import threadpool_limits
 
 from riskrank import benchmarks, models
 from riskrank.evaluate import family_tests, recall_block, reliability, uncalibrated_probability
@@ -65,6 +75,7 @@ def load_all() -> dict:
 def _init(loader=None) -> None:
     """Worker set-up: one thread per model, and the corpora loaded once per process."""
     warnings.filterwarnings("ignore")
+    threadpool_limits(1)
     models.N_JOBS = 1
     DATA.clear()
     DATA.update((loader or load_all)())
