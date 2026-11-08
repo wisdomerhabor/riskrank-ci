@@ -6,3 +6,5 @@ __pycache__/
 runs/
 logs/
 registry/
+*.egg-info/
+build/
