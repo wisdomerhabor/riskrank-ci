@@ -17,6 +17,23 @@ Prototype for an MIT (Software Engineering) project at Miva Open University.
 If anything fails (bad settings, model checksum, scoring timeout, missing coverage map) the job logs a
 warning and runs the tests in their usual order.
 
+## Workstation side: plan store, plan ingest and dashboard
+
+The CI runner cannot reach the workstation, so the workstation pulls. `riskrank.ingest` collects each
+completed scoring run's plan artifact from the default branch, checks where it came from and its format,
+and saves it through the storage interface (`riskrank.store`, SQLite by default, PostgreSQL by URL).
+The Streamlit dashboard (`src/riskrank/dashboard.py`) reads only from that store and asks for a login
+before showing anything.
+
+```bash
+.venv/bin/pip install -e ".[dashboard]"
+.venv/bin/python -m riskrank.auth ~/.config/riskrank/dashboard-auth.json
+RISKRANK_GH_TOKEN_FILE=~/.config/riskrank/ingest-token .venv/bin/python -m riskrank.ingest --repo wisdomerhabor/riskrank-ci
+RISKRANK_AUTH=~/.config/riskrank/dashboard-auth.json .venv/bin/streamlit run src/riskrank/dashboard.py --server.address 127.0.0.1
+```
+
+Or run both as containers with `docker compose -f deploy/compose.yaml up -d --build`.
+
 ## Layout
 
 | Path | Contents |

@@ -1,19 +1,21 @@
 # RiskRank CI adapter for GitHub Actions (NFR14: the only platform-specific part).
 # Copy into <deployment repo>/.github/workflows/riskrank.yml, beside a riskrank.yml settings file.
 name: riskrank
-on: push
+on:
+  push:
+    branches: [main]   # your default branch: only its pushes are scored
 permissions:
   contents: read
 jobs:
   riskrank:
     runs-on: ubuntu-latest
     env:
-      RISKRANK_REF: v0.1.5                      # riskrank-ci release: code and scoring image
+      RISKRANK_REF: v0.1.6                      # riskrank-ci release: code and scoring image
       MODELS_REF: v0.1.2                        # riskrank-ci release holding the model bundles
       MODELS_DIR: /tmp/riskrank-models          # outside the workspace: checkout must be able to clean it
     services:
       scoring:                                  # job service container, reachable only on the job network (NFR4)
-        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.5
+        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.6
         ports: ["8000:8000"]
         env:
           RISKRANK_MODELS: /models/models.json

@@ -1,0 +1,26 @@
+# Local container host (section 3.7.8): the dashboard, the plan-ingest component and the plan store.
+#   python -m riskrank.auth ~/.config/riskrank/dashboard-auth.json    # once: the login (NFR15)
+#   put a read-only fine-grained token (Actions: read, Contents: read) in ~/.config/riskrank/ingest-token
+#   docker compose -f deploy/compose.yaml up -d --build
+# The dashboard port is bound to the loopback address, so only this workstation can reach it.
+services:
+  dashboard:
+    build: {context: .., dockerfile: deploy/Dockerfile.dashboard}
+    image: riskrank-dashboard
+    ports: ["127.0.0.1:8501:8501"]
+    volumes: ["plan-store:/data"]
+    secrets: [dashboard_auth]
+    restart: unless-stopped
+  ingest:
+    image: riskrank-dashboard
+    depends_on: [dashboard]
+    command: ["python", "-m", "riskrank.ingest", "--repo", "wisdomerhabor/riskrank-ci",
+              "--repo", "wisdomerhabor/flask", "--every", "900"]
+    volumes: ["plan-store:/data"]
+    secrets: [ingest_token]
+    restart: unless-stopped
+volumes:
+  plan-store: {}
+secrets:
+  dashboard_auth: {file: ~/.config/riskrank/dashboard-auth.json}
+  ingest_token: {file: ~/.config/riskrank/ingest-token}

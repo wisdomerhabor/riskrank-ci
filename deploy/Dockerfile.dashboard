@@ -1,0 +1,15 @@
+# Workstation image for the dashboard and the plan-ingest component (Figure 3.5). Same image, two
+# commands; neither runs project or test code. Build from the repository root:
+#   docker build -f deploy/Dockerfile.dashboard -t riskrank-dashboard .
+FROM python:3.13-slim
+WORKDIR /app
+COPY pyproject.toml .
+COPY src/ src/
+RUN pip install --no-cache-dir ".[dashboard,postgres]"
+RUN useradd --create-home riskrank && mkdir /data && chown riskrank /data
+USER riskrank
+ENV RISKRANK_DB=sqlite:////data/riskrank.db RISKRANK_AUTH=/run/secrets/dashboard_auth \
+    RISKRANK_GH_TOKEN_FILE=/run/secrets/ingest_token
+EXPOSE 8501
+CMD ["streamlit", "run", "src/riskrank/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501", \
+     "--server.headless", "true", "--browser.gatherUsageStats", "false"]
