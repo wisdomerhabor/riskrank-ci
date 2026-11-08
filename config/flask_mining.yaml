@@ -83,3 +83,29 @@ offline_evaluation:
   curve: offline recall at lines budgets 0-100 percent in 1-point steps, mean over snapshots
   calibration: reliability in 10 equal-width bins over all held-out rows pooled; Brier score
   significance: none (too few projects); effect direction and rank-biserial over the snapshots only
+
+# ADDED 8 Nov 2026 (student's decision: minimum 20), before any candidate separation date, anchor count
+# or recall was examined: the first bounded check (section 3.10.3), runtime-set defect recall.
+first_check:
+  training_snapshot_minimum: 20       # labelled module snapshots whose 12-month window ends strictly before the date
+  candidate_dates: first commit (committer time, history_end_commit's first-parent and merged history) of each calendar month
+  separation_date: earliest candidate date meeting the minimum; recorded before any recall is calculated
+  validation_model: >-
+    trained only on those snapshots, as the deployed model is (families lr, rf, lgbm tuned for equal
+    seconds with seed 42, chosen by tuning AUC-PR; final fifth of the training snapshots by date for
+    calibration); ranks by the default key
+  anchors: R-SZZ inducing commits (rszz.jsonl) committed on or after the separation date and not merges
+  ranked_set: the scoreable source modules the anchor commit touches (diff against its first parent), with
+    features computed by riskrank.hook.module_features up to and including the anchor
+  label: a ranked module is defective when R-SZZ blames it for that anchor (union of blamed_files over every
+    fix whose inducing commit is the anchor, each path followed back through renames to its name at the anchor)
+  exclusions_counted: blamed modules all outside the ranked set; every ranked module blamed; blamed files
+    the anchor did not touch (removed from the label and counted)
+  budget: 20 percent; artefacts and lines, runtime boundary kept whole (riskrank.budget.mark)
+  chance: artefacts = realised share; lines = mean recall over every module order (100 seeded orders, seed 0,
+    above 8 modules) with the 2.5-97.5 percentile interval
+  baselines: largest-first (artefacts), smallest-first (lines), recency (last content change strictly before
+    the anchor, newest first, none last); ties by ascending module path
+  minimum_anchors: 12                 # fewer makes the check uninformative
+  reporting: descriptive only; per-anchor difference from its own chance level, mean and spread; mean recall
+    for the system and each baseline with the number of anchors
