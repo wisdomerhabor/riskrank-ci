@@ -3,12 +3,15 @@
 #   put a read-only fine-grained token (Actions: read, Contents: read) in ~/.config/riskrank/ingest-token
 #   docker compose -f deploy/compose.yaml up -d --build
 # The dashboard port is bound to the loopback address, so only this workstation can reach it.
+# The plan store is a folder on the workstation, so the offline evaluation component (run on the host:
+#   python -m riskrank.offline_module --db sqlite:///$HOME/.local/share/riskrank/riskrank.db)
+# writes through the storage interface into the same database the dashboard reads.
 services:
   dashboard:
     build: {context: .., dockerfile: deploy/Dockerfile.dashboard}
     image: riskrank-dashboard
     ports: ["127.0.0.1:8501:8501"]
-    volumes: ["plan-store:/data"]
+    volumes: ["${HOME}/.local/share/riskrank:/data"]
     secrets: [dashboard_auth]
     restart: unless-stopped
   ingest:
@@ -16,11 +19,9 @@ services:
     depends_on: [dashboard]
     command: ["python", "-m", "riskrank.ingest", "--repo", "wisdomerhabor/riskrank-ci",
               "--repo", "wisdomerhabor/flask", "--every", "900"]
-    volumes: ["plan-store:/data"]
+    volumes: ["${HOME}/.local/share/riskrank:/data"]
     secrets: [ingest_token]
     restart: unless-stopped
-volumes:
-  plan-store: {}
 secrets:
   dashboard_auth: {file: ~/.config/riskrank/dashboard-auth.json}
   ingest_token: {file: ~/.config/riskrank/ingest-token}
