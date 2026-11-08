@@ -56,4 +56,12 @@ commit_level:
   calibration: final fifth of the time before the gap
 
 deployment_model:
-  fork_point: "2025-11-07"            # plan D5: deployed Flask model sees only pre-fork history
+  fork_point: "2025-03-30"            # plan D5: deployed Flask model sees only pre-fork history
+  fork_commit: b78b5a21                # last upstream main (first-parent) commit before the fork point
+  replay: one sync-merge per upstream first-parent commit after fork_commit; a push counts only if
+          it changes a source module
+# AMENDED 8 Nov 2026 (student's decision), before any replay push: the fork point was 2025-11-07,
+# which leaves only 27 source-changing first-parent pushes (29 non-merge commits) up to the history
+# end, below the 30 counted pushes Table 1.1 requires. An earlier count of 34 used the GitHub API's
+# date filter, which also includes commits authored before but merged after the date. 2025-03-30
+# leaves 34 (margin 4). The deployed module model is re-fitted for it as flask-module-v2.
