@@ -13,7 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.13"}
-      - run: pip install -e . pytest pytest-cov "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.0"
+      - name: Install the project and riskrank
+        run: |
+          if [ -f src/riskrank/__init__.py ]; then pip install -e . pytest pytest-cov   # this repo IS riskrank
+          else pip install -e . pytest pytest-cov "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.1"; fi
       - name: Run the suite with per-test coverage contexts
         run: |
           RISKRANK_DURATIONS=durations.json python -m pytest -q -p riskrank.durations_plugin \

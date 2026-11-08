@@ -8,11 +8,12 @@ jobs:
   riskrank:
     runs-on: ubuntu-latest
     env:
-      RISKRANK_REF: v0.1.0                      # riskrank-ci release holding code, image and models
+      RISKRANK_REF: v0.1.1                      # riskrank-ci release: code and scoring image
+      MODELS_REF: v0.1.0                        # riskrank-ci release holding the model bundles
       MODELS_DIR: ${{ github.workspace }}/.riskrank/models
     services:
       scoring:                                  # job service container, reachable only on the job network (NFR4)
-        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.0
+        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.1
         ports: ["8000:8000"]
         env:
           RISKRANK_MODELS: /models/models.json
@@ -25,13 +26,14 @@ jobs:
         with: {python-version: "3.13"}
       - name: Install riskrank and the project's tests' dependencies
         run: |
-          pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}" pytest pytest-cov
-          pip install -e . || true
+          if [ -f src/riskrank/__init__.py ]; then pip install -e . pytest pytest-cov   # this repo IS riskrank
+          else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}" pytest pytest-cov
+               pip install -e . || echo "repository is not pip-installable; tests run from source"; fi
       - name: Fetch models and coverage map
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           mkdir -p "$MODELS_DIR" && cd "$MODELS_DIR"
-          gh release download "$RISKRANK_REF" -R wisdomerhabor/riskrank-ci -p 'models-*.tar.gz'
+          gh release download "$MODELS_REF" -R wisdomerhabor/riskrank-ci -p 'models-*.tar.gz'
           for f in models-*.tar.gz; do tar xzf "$f"; done
           python -m riskrank.models_json "$GITHUB_WORKSPACE/riskrank.yml" > "$MODELS_DIR/models.json"
           cd "$GITHUB_WORKSPACE"

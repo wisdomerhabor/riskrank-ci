@@ -36,17 +36,25 @@ from riskrank.features import SchemaMismatch
 
 def create_app(models: dict | None = None, token: str | None = None) -> Flask:
     app = Flask(__name__)
-    if models is None:
-        with open(os.environ.get("RISKRANK_MODELS", "models.json")) as f:
-            models = json.load(f)
+    fixed = models
     token = token if token is not None else os.environ.get("RISKRANK_TOKEN")
 
     loaded, failures = {}, {}
 
+    def model_list() -> dict:
+        """The models to serve. In a CI job the service container starts BEFORE the step that writes
+        models.json and downloads the models, so a missing file means "nothing yet", not an error."""
+        if fixed is not None:
+            return fixed
+        try:
+            with open(os.environ.get("RISKRANK_MODELS", "models.json")) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
     def ensure_loaded():
-        """Load any model not yet loaded. In a CI job the service container starts before the step
-        that downloads the models, so loading is retried on each request until it succeeds."""
-        for granularity, spec in models.items():
+        """Load any model not yet loaded; retried on each request until it succeeds."""
+        for granularity, spec in model_list().items():
             if granularity in loaded:
                 continue
             try:
@@ -79,7 +87,7 @@ def create_app(models: dict | None = None, token: str | None = None) -> Flask:
         if g in failures:
             return jsonify(error="model unavailable", detail=failures[g]), 503
         if g not in loaded:
-            return jsonify(error=f"unknown granularity {g!r}"), 422
+            return jsonify(error=f"model for {g!r} not available yet"), 503
         meta, mv, explainer = loaded[g]
         expected = mv.pipeline.features
         arts = body.get("artefacts", [])

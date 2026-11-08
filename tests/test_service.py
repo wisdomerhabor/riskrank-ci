@@ -93,3 +93,14 @@ def test_background_never_stores_a_record_and_merges_small_clusters():
     assert bg.merged >= 1  # the two-point outlier cluster cannot stand alone
     assert not any(((bg.centres.values == row).all(1)).any() for row in x.values)
     assert bg.weights.sum() == pytest.approx(1.0)
+
+
+def test_service_starts_before_models_json_exists(published, tmp_path, monkeypatch):
+    # In a CI job the service container starts before the step that writes models.json.
+    folder, meta, _, _ = published
+    path = tmp_path / "models.json"
+    monkeypatch.setenv("RISKRANK_MODELS", str(path))
+    c = create_app().test_client()  # must not raise
+    assert c.post("/score", json=body([{"la": 1, "ld": 1, "nf": 1}])).status_code == 503
+    path.write_text(json.dumps({"commit": {"folder": folder, "sha256": meta["bundle_sha256"]}}))
+    assert c.post("/score", json=body([{"la": 1, "ld": 1, "nf": 1}])).status_code == 200
