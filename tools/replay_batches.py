@@ -6,7 +6,9 @@ batch, in upstream order, waiting for the merge and for the scoring run each pus
 
 A batch is everything upstream up to one first-parent commit of pallets/flask main that changes the
 source package, after the fork commit (34 batches). Batches already in the fork's main are skipped.
-Stops at the first failed replay or scoring run, so it can be fixed before going on. Uses `gh`.
+Records each scoring run's conclusion and failed steps. Failing repository tests are recorded, not a
+reason to stop (the run still ran its plan in order); any other failed step, or a failed replay, stops
+the driver so it can be fixed before going on. Uses `gh`.
 """
 
 from __future__ import annotations
@@ -63,6 +65,14 @@ def wait_run(workflow: str, *, after: str | None = None, head_sha: str | None = 
     raise TimeoutError(f"{workflow} run did not finish")
 
 
+TEST_STEP = "Run tests in plan order"
+
+
+def failed_steps(run_id: int) -> list[str]:
+    jobs = json.loads(sh("gh", "run", "view", str(run_id), "-R", FORK, "--json", "jobs"))["jobs"]
+    return [st["name"] for j in jobs for st in j["steps"] if st["conclusion"] == "failure"]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True)
@@ -82,13 +92,16 @@ def main() -> None:
         if rep["conclusion"] == "success":
             head = fork_main()
             score = wait_run("riskrank", head_sha=head)
-            rec |= {"fork_head": head, "scoring_run": score["databaseId"], "scoring": score["conclusion"]}
+            rec |= {"fork_head": head, "scoring_run": score["databaseId"], "scoring": score["conclusion"],
+                    "failed_steps": failed_steps(score["databaseId"])}
         rec["finished"] = datetime.now(timezone.utc).isoformat()
         with open(a.log, "a") as f:
             f.write(json.dumps(rec) + "\n")
         print(json.dumps(rec), flush=True)
-        if rec.get("scoring") != "success":
-            raise SystemExit(f"batch {i} failed; stopping")
+        # Failing tests are data, not a pipeline fault: the run still executed its plan in order and counts.
+        # Stop only when the replay failed or a step other than the test step failed.
+        if rec["replay"] != "success" or any(s != TEST_STEP for s in rec.get("failed_steps", [])):
+            raise SystemExit(f"batch {i}: pipeline failure; stopping")
         done += 1
         if a.stop_after and done >= a.stop_after:
             break
