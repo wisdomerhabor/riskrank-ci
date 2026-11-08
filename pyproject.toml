@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "riskrank"
-version = "0.1.6"
+version = "0.1.7"
 requires-python = ">=3.13"
 # Base install: what the CI side needs (hook, test plan, pytest plugins). Ranges, not pins, so it
 # installs beside a project's own dependencies (e.g. a Flask project). The scoring image installs the

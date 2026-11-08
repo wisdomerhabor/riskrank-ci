@@ -29,7 +29,10 @@ def test_sync_merge_uses_the_upstream_commit_date(tmp_path, monkeypatch):
 
 
 def test_command_shapes(tmp_path, monkeypatch):
-    monkeypatch.chdir(_repo(tmp_path))
+    r = _repo(tmp_path)
+    (r / "requirements").mkdir()
+    (r / "requirements" / "tests.txt").write_text("pytest\n")
+    monkeypatch.chdir(r)
     dated = command({"test_requirements": ["requirements/tests.txt"], "test_env_date": "commit"})
     assert dated[:5] == ["uv", "pip", "install", "--system", "--exclude-newer"] and "requirements/tests.txt" in dated
     assert "--exclude-newer" not in command({})
@@ -56,3 +59,26 @@ def test_newest_is_by_time_not_by_string(tmp_path, monkeypatch):
                        check=True, env={"GIT_COMMITTER_DATE": d, "PATH": "/usr/bin:/bin:/opt/homebrew/bin"})
     monkeypatch.chdir(r)
     assert tested_commit_date() == "2025-03-30T21:30:00+01:00"  # a string max would pick the -07:00 one
+
+
+def test_replay_workflow_commit_is_ignored_too(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    (r / ".github" / "workflows").mkdir(parents=True)
+    (r / ".github" / "workflows" / "riskrank-replay.yml").write_text("name: x\n")
+    subprocess.run(["git", "-C", str(r), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(r), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "replay"],
+                   check=True, env={"GIT_COMMITTER_DATE": "2026-11-09T10:00:00+00:00", "PATH": "/usr/bin:/bin:/opt/homebrew/bin"})
+    monkeypatch.chdir(r)
+    assert tested_commit_date().startswith("2025-04-02")
+
+
+def test_requirement_files_or_dependency_group_whichever_the_commit_has(tmp_path, monkeypatch):
+    monkeypatch.chdir(_repo(tmp_path))
+    s = {"test_requirements": ["requirements/tests.txt"], "test_dependency_group": "tests"}
+    cmd = command(s)
+    assert "-r" not in cmd and "--group" not in cmd           # neither exists here
+    (tmp_path / "r" / "pyproject.toml").write_text('[dependency-groups]\ntests = ["pytest"]\n')
+    assert command(s)[-4:-2] == ["--group", "tests"]
+    (tmp_path / "r" / "requirements").mkdir()
+    (tmp_path / "r" / "requirements" / "tests.txt").write_text("pytest\n")
+    assert "requirements/tests.txt" in command(s)
