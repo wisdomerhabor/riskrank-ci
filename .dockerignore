@@ -1,0 +1,7 @@
+.venv
+data
+runs
+logs
+.git
+tests
+tools

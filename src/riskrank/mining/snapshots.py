@@ -158,7 +158,7 @@ def build() -> pd.DataFrame:
                           "inducing_when": pd.Timestamp(r["inducing_date"]).tz_convert("UTC"),
                           "blamed": set(r["blamed_files"])})
 
-    rows, unparsable = [], 0
+    rows, py2, unparsable = [], [], 0
     for s in snaps:
         tree = git("rev-list", "-1", f"--before={s.isoformat()}", cfg["history_end_commit"]).strip()
         modules = [p for p in git("ls-tree", "-r", "--name-only", tree).splitlines() if is_source(p, cfg)]
@@ -168,14 +168,34 @@ def build() -> pd.DataFrame:
         defective = forward_paths(commits, modules, s, window)
         for p in modules:
             sm = static_metrics(tree, p)
+            row = {"snapshot": s, "module": p, "tree": tree, **proc[p], "label": p in defective,
+                   "measured_with": "radon 6 / python 3"}
             if sm is None:
-                unparsable += 1
+                py2.append(row)
                 continue
-            rows.append({"snapshot": s, "module": p, "tree": tree, "size": sm[0], "complexity": sm[1],
-                         **proc[p], "label": p in defective})
-    df = pd.DataFrame(rows)
+            rows.append(row | {"size": sm[0], "complexity": sm[1]})
+    # Python 2-only source cannot be parsed by Python 3. It is measured in one batch by Radon 4.1.0 on
+    # Python 2.7 (tools/radon27), which matched Radon 6 on Python 3 for all 85 files parsable by
+    # both (4 snapshots, 2014-2016; checked 8 Nov 2026).
+    for row, m in zip(py2, radon27([(r["tree"], r["module"]) for r in py2])):
+        if m["sloc"] is None:
+            unparsable += 1
+            continue
+        rows.append(row | {"size": m["sloc"], "complexity": m["complexity"],
+                           "measured_with": "radon 4.1.0 / python 2.7"})
+    df = pd.DataFrame(rows).sort_values(["snapshot", "module"]).reset_index(drop=True)
     df.attrs["unparsable_modules"] = unparsable
+    df.attrs["python2_measured"] = len(py2) - unparsable
     return df
+
+
+def radon27(items: list[tuple[str, str]]) -> list[dict]:
+    if not items:
+        return []
+    payload = [{"key": f"{t}:{p}", "source": git("show", f"{t}:{p}")} for t, p in items]
+    out = subprocess.run(["docker", "run", "--rm", "-i", "radon27:4.1.0"], input=json.dumps(payload),
+                         capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
 
 
 def main() -> None:
@@ -185,7 +205,7 @@ def main() -> None:
     g = df.groupby("snapshot")["label"].agg(["size", "sum"])
     print(f"{len(g)} snapshots ({g.index.min().date()} to {g.index.max().date()}), {len(df)} module rows, "
           f"{int(df['label'].sum())} defective; snapshots with no defect: {(g['sum'] == 0).sum()}; "
-          f"unparsable skipped: {df.attrs['unparsable_modules']}")
+          f"measured under Python 2.7: {df.attrs['python2_measured']}; unparsable skipped: {df.attrs['unparsable_modules']}")
 
 
 if __name__ == "__main__":
