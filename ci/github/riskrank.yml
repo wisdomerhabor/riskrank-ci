@@ -33,7 +33,7 @@ jobs:
           mkdir -p "$MODELS_DIR" && cd "$MODELS_DIR"
           gh release download "$RISKRANK_REF" -R wisdomerhabor/riskrank-ci -p 'models-*.tar.gz'
           for f in models-*.tar.gz; do tar xzf "$f"; done
-          python -m riskrank.models_json riskrank.yml "$MODELS_DIR" > "$MODELS_DIR/models.json" || true
+          python -m riskrank.models_json "$GITHUB_WORKSPACE/riskrank.yml" > "$MODELS_DIR/models.json"
           cd "$GITHUB_WORKSPACE"
           gh release download coverage-latest -p coverage-map.json -D .riskrank || echo "no coverage map yet"
       - name: List current tests
