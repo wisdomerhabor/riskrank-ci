@@ -95,6 +95,25 @@ def process_window(commits: list[dict], live: list[str], lo, hi, keywords) -> di
     return out
 
 
+def last_change(commits: list[dict], live: list[str], before) -> dict[str, pd.Timestamp | None]:
+    """Time of each live module's last content-changing commit before `before`, following renames
+    backwards in time as process_window does. Used by the recency baseline."""
+    alias = {p: p for p in live}
+    out: dict[str, pd.Timestamp | None] = {p: None for p in live}
+    for c in reversed(commits):
+        if c["when"] >= before:
+            continue
+        for f in c["files"]:
+            q = alias.get(f["new"])
+            if q is not None and f["lines"] > 0 and out[q] is None:
+                out[q] = c["when"]
+        if all(v is not None for v in out.values()):
+            break
+        for f in c["files"]:
+            if f["old"] != f["new"] and f["new"] in alias:
+                alias[f["old"]] = alias.pop(f["new"])
+    return out
+
 def forward_paths(commits: list[dict], live: list[str], start, fixes_in_window: list[dict]) -> set[str]:
     """Snapshot modules blamed by the given fixes, following renames forward from `start`."""
     cur = {p: p for p in live}  # snapshot path -> its path at the current point in time

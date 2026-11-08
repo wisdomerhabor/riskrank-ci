@@ -46,3 +46,17 @@ def test_forward_walk_labels_the_right_module():
     fix_on_new_app = [{"when": pd.Timestamp("2023-10-01", tz="UTC"), "blamed": {"src/flask/app.py"}}]
     assert forward_paths(HISTORY, live, snap, fix_on_sansio) == {"src/flask/app.py"}
     assert forward_paths(HISTORY, live, snap, fix_on_new_app) == set()  # a different file now
+
+
+def test_last_change_follows_renames_and_ignores_pure_moves():
+    import pandas as pd
+    from riskrank.mining.snapshots import last_change
+    t = lambda d: pd.Timestamp(d, tz="UTC")
+    commits = [
+        {"when": t("2025-01-01"), "files": [{"old": "a.py", "new": "a.py", "lines": 5}]},
+        {"when": t("2025-02-01"), "files": [{"old": "a.py", "new": "b.py", "lines": 0}]},   # pure move
+        {"when": t("2025-03-01"), "files": [{"old": "c.py", "new": "c.py", "lines": 2}]},
+        {"when": t("2025-05-01"), "files": [{"old": "b.py", "new": "b.py", "lines": 9}]},   # after the snapshot
+    ]
+    got = last_change(commits, ["b.py", "c.py"], t("2025-04-01"))
+    assert got == {"b.py": t("2025-01-01"), "c.py": t("2025-03-01")}
