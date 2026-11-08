@@ -4,21 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "riskrank"
-version = "0.1.0"
+version = "0.1.3"
 requires-python = ">=3.13"
+# Base install: what the CI side needs (hook, test plan, pytest plugins). Ranges, not pins, so it
+# installs beside a project's own dependencies (e.g. a Flask project). The scoring image installs the
+# full pinned set from requirements.txt.
 dependencies = [
-    "imbalanced-learn==0.14.2",
-    "lightgbm==4.7.0",
-    "numpy==2.5.4",
-    "pandas==3.1.1",
-    "scikit-learn==1.9.1",
-    "shap==0.54.1",
-    "PyYAML==6.0.3",
-    "radon==6.0.1",
-    "Flask==3.1.3",
-    "gunicorn==26.2.0",
-    "coverage",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "PyYAML>=6.0",
+    "radon>=6.0",
+    "coverage>=7.0",
 ]
+
+[project.optional-dependencies]
+ml = ["scikit-learn==1.9.1", "lightgbm==4.7.0", "shap==0.54.1", "imbalanced-learn==0.14.2"]
+service = ["riskrank[ml]", "Flask==3.1.3", "gunicorn==26.2.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
