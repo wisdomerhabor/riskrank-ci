@@ -1,12 +1,14 @@
 # Pre-registered 8 Nov 2026, before any cross-project or sensitivity-variant model was fitted or scored
 # (plan D6 item 1; section 3.5.1 variants, section 3.8.2 cross-project rule, section 3.10.4 families).
 # Both arms run on an otherwise idle workstation, like the run of record, because tuning is time-budgeted.
+# AMENDED 8 Nov 2026, before any of these runs: the compact neural model (mlp) joins every family list,
+# including the run of record, because section 3.8.2 evaluates it offline in all experiments.
 
 cross_project:
   held_out: each of the 13 projects in turn
   training: the other 12 projects' base partitions, pooled
   calibration_and_mcc_threshold: the other 12 projects' calibration partitions, pooled (section 3.8.2)
-  families: [lr, rf, lgbm]                # same families, seconds (60) and seed (42) as the run of record
+  families: [lr, rf, lgbm, mlp]           # same families, seconds (60) and seed (42) as the run of record
   scored: the held-out project's test partition, primary labels
   reported: per project and per family, descriptively; outside the significance tests (section 3.10.4)
 

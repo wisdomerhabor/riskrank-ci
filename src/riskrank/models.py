@@ -1,7 +1,8 @@
 """Model development, imbalance handling and calibration (section 3.8.2).
 
-Candidate families: logistic regression (baseline), random forest and LightGBM (the tree family).
-The compact neural model is added later (plan item D6-2).
+Candidate families: logistic regression (baseline), random forest and LightGBM (the tree family), and
+a compact neural model (scikit-learn multi-layer perceptron, one or two small hidden layers with early
+stopping), which section 3.8.2 evaluates offline in every experiment.
 
 For one corpus slice (for example one ApacheJIT project):
 
@@ -39,12 +40,14 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, matthews_corrcoef
+from sklearn.neural_network import MLPClassifier
+from sklearn.utils.class_weight import compute_sample_weight
 
 from riskrank.budget import rank, recall_lines
 from riskrank.features import FeaturePipeline
 
-FAMILIES = ("lr", "rf", "lgbm")
-SCALED = {"lr"}  # tree ensembles use unscaled features (section 3.5.2)
+FAMILIES = ("lr", "rf", "lgbm", "mlp")
+SCALED = {"lr", "mlp"}  # tree ensembles use unscaled features (section 3.5.2)
 N_FOLDS = 4
 ISOTONIC_MIN = 1000
 
@@ -71,6 +74,13 @@ def sample_params(family: str, rng: np.random.Generator) -> dict:
             "colsample_bytree": float(rng.uniform(0.6, 1.0)),
             "reg_lambda": float(10 ** rng.uniform(-3, 1)),
         }
+    if family == "mlp":
+        return {
+            "hidden_layer_sizes": [(16,), (32,), (64,), (32, 16), (64, 32)][int(rng.integers(5))],
+            "alpha": float(10 ** rng.uniform(-5, -1)),
+            "learning_rate_init": float(10 ** rng.uniform(-4, -2)),
+            "batch_size": int(rng.choice([64, 128, 256])),
+        }
     raise ValueError(family)
 
 
@@ -91,6 +101,9 @@ def make(family: str, params: dict, imbalance: str, seed: int):
         return LGBMClassifier(
             **params, is_unbalance=weighted, random_state=seed, n_jobs=-1, verbose=-1
         )
+    if family == "mlp":  # class weighting is applied as balanced sample weights in _fit_one
+        return MLPClassifier(**params, early_stopping=True, validation_fraction=0.1, n_iter_no_change=10,
+                             max_iter=200, random_state=seed)
     raise ValueError(family)
 
 
@@ -100,7 +113,7 @@ def raw_score(model, x: pd.DataFrame) -> np.ndarray:
         return model.decision_function(x)  # log-odds
     if isinstance(model, LGBMClassifier):
         return model.predict(x, raw_score=True)  # log-odds
-    return model.predict_proba(x)[:, 1]  # random forest: probability
+    return model.predict_proba(x)[:, 1]  # random forest and neural model: probability
 
 
 # ------------------------------------------------------------------ the folds
@@ -126,7 +139,11 @@ def _fit_one(family, params, imbalance, seed, tr_frame, features):
         if minority < 2:
             raise ValueError("too few minority examples for SMOTE")
         x, y = SMOTE(k_neighbors=min(5, minority - 1), random_state=seed).fit_resample(x, y)
-    model = make(family, params, imbalance, seed).fit(x, y)
+    model = make(family, params, imbalance, seed)
+    if family == "mlp" and imbalance == "weight":
+        model.fit(x, y, sample_weight=compute_sample_weight("balanced", y))
+    else:
+        model.fit(x, y)
     return pipe, model
 
 

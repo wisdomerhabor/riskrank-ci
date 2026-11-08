@@ -30,7 +30,7 @@ def test_time_folds_train_only_on_earlier_commits():
         assert base["when"].iloc[tr].max() < base["when"].iloc[va].min()
 
 
-@pytest.mark.parametrize("family", ["lr", "rf", "lgbm"])
+@pytest.mark.parametrize("family", ["lr", "rf", "lgbm", "mlp"])
 def test_tune_and_fit_final_never_touch_test(family):
     d = synthetic_commits(800)
     base, calib = d.iloc[:500], d.iloc[500:650]

@@ -14,7 +14,7 @@ from tests.test_models import FEATS, synthetic_commits
 RANGE = {"max_files": 100, "max_lines": 10000}
 
 
-@pytest.fixture(scope="module", params=["lr", "rf", "lgbm"])
+@pytest.fixture(scope="module", params=["lr", "rf", "lgbm", "mlp"])
 def published(request, tmp_path_factory):
     d = synthetic_commits(700)
     base, calib = d.iloc[:500], d.iloc[500:]
@@ -104,3 +104,15 @@ def test_service_starts_before_models_json_exists(published, tmp_path, monkeypat
     assert c.post("/score", json=body([{"la": 1, "ld": 1, "nf": 1}])).status_code == 503
     path.write_text(json.dumps({"commit": {"folder": folder, "sha256": meta["bundle_sha256"]}}))
     assert c.post("/score", json=body([{"la": 1, "ld": 1, "nf": 1}])).status_code == 200
+
+
+def test_neural_reason_codes_are_approximate_but_repeatable(published):
+    folder, meta, mv, base = published
+    if mv.tuned.family != "mlp":
+        pytest.skip("neural model only")
+    from riskrank.explain import Explainer, make_background
+    x, _ = mv.pipeline.transform(base, scale=True)
+    ex = Explainer(mv, make_background(x, seed=1))
+    rows = base.iloc[:3]
+    assert ex.reason_codes(rows) == ex.reason_codes(rows)            # same input, same codes
+    assert ex.record()["attribution"] == "Kernel SHAP (approximate)"

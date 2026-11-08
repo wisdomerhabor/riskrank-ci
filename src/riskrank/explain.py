@@ -9,7 +9,9 @@ Background data is a k-means summary of the model's base data: weighted cluster 
 cluster of fewer than five members merged into its nearest cluster, so no individual training record
 is stored with a model version. Tree SHAP (interventional) is used for tree ensembles; for logistic
 regression the exact linear form coef * (x - weighted mean) is used, which is what Linear SHAP gives
-under an independent masker.
+under an independent masker. The neural model uses Kernel SHAP over the expanded background with a
+fixed sample count and seed: its contributions are approximate, but still add up to the raw output
+(Kernel SHAP's efficiency constraint) and repeat exactly for the same input.
 
 Two checks from section 3.8.3 are enforced on every call:
   1. additivity: base value + sum of contributions == raw output (to 1e-6), else ExplanationError;
@@ -25,6 +27,7 @@ import pandas as pd
 import shap
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 
 from riskrank.models import SCALED, raw_score
 
@@ -32,6 +35,8 @@ K = 10
 MIN_MEMBERS = 5
 REPLICATES = 100  # weighted centres are expanded to ~100 rows for Tree SHAP, which takes no weights
 TOLERANCE = 1e-6
+KERNEL_SEED = 0
+KERNEL_SAMPLES = 512
 
 
 class ExplanationError(RuntimeError):
@@ -83,11 +88,17 @@ class Explainer:
         self.background = background
         self.family = mv.tuned.family
         model = mv.model
+        self._kernel = None
         if isinstance(model, LogisticRegression):
             self._mean = background.mean()
             self._coef = pd.Series(model.coef_[0], index=background.centres.columns)
             self._base = float(model.intercept_[0] + (self._coef * self._mean).sum())
             self._tree = None
+        elif isinstance(model, MLPClassifier):
+            cols = list(background.centres.columns)
+            self._tree = None
+            self._kernel = shap.KernelExplainer(
+                lambda a: raw_score(model, pd.DataFrame(a, columns=cols)), background.expanded().to_numpy())
         else:
             out = "raw"
             self._tree = shap.TreeExplainer(model, data=background.expanded(), model_output=out,
@@ -95,7 +106,11 @@ class Explainer:
 
     def contributions(self, x: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         """(base values, contributions) on the model's raw scale, for model-ready rows `x`."""
-        if self._tree is None:
+        if self._kernel is not None:
+            np.random.seed(KERNEL_SEED)  # Kernel SHAP samples coalitions with numpy's global generator
+            contrib = np.asarray(self._kernel.shap_values(x.to_numpy(), nsamples=KERNEL_SAMPLES, silent=True))
+            base = np.full(len(x), float(self._kernel.expected_value))
+        elif self._tree is None:
             contrib = ((x - self._mean) * self._coef).to_numpy()
             base = np.full(len(x), self._base)
         else:
@@ -126,7 +141,10 @@ class Explainer:
         return out
 
     def record(self) -> dict:
-        return {"attribution": "linear (exact)" if self._tree is None else "Tree SHAP, interventional",
+        attribution = ("Kernel SHAP (approximate)" if self._kernel is not None
+                       else "linear (exact)" if self._tree is None else "Tree SHAP, interventional")
+        return {"attribution": attribution,
+                "kernel": {"seed": KERNEL_SEED, "samples": KERNEL_SAMPLES} if self._kernel is not None else None,
                 "scale": "log-odds" if self.family in ("lr", "lgbm") else "probability",
                 "background": {"k_requested": self.background.k_requested,
                                "clusters": len(self.background.centres),
