@@ -38,15 +38,15 @@ from riskrank.mining.fixes import REPO, load_config, is_source
 OUT = "data/mined/flask"
 
 
-def git(*args: str) -> str:
-    return subprocess.run(["git", "-C", REPO, *args], capture_output=True, text=True, check=True).stdout
+def git(*args: str, repo: str = REPO) -> str:
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
 
 
 # --------------------------------------------------------------- history index
-def history(end: str) -> list[dict]:
+def history(end: str, repo: str = REPO) -> list[dict]:
     """Every non-merge commit with numstat and rename pairs, oldest first."""
     out = git("log", end, "--no-merges", "-M", "--reverse", "--format=\x1e%H%x00%cI%x00%s%x00%b%x00",
-              "--numstat")
+              "--numstat", repo=repo)
     rows = []
     for rec in out.split("\x1e")[1:]:
         h, when, subj, body, stats = rec.split("\x00", 4)
@@ -119,9 +119,9 @@ def forward_paths(commits: list[dict], live: list[str], start, fixes_in_window: 
 
 
 # ---------------------------------------------------------------- measurement
-def static_metrics(commit: str, path: str) -> tuple[int, int] | None:
+def static_metrics(commit: str, path: str, repo: str = REPO) -> tuple[int, int] | None:
     try:
-        src = git("show", f"{commit}:{path}")
+        src = git("show", f"{commit}:{path}", repo=repo)
     except subprocess.CalledProcessError:
         return None
     try:

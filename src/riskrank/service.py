@@ -42,11 +42,20 @@ def create_app(models: dict | None = None, token: str | None = None) -> Flask:
     token = token if token is not None else os.environ.get("RISKRANK_TOKEN")
 
     loaded, failures = {}, {}
-    for granularity, spec in models.items():
-        try:
-            loaded[granularity] = registry.load(spec["folder"], spec["sha256"])
-        except (registry.ChecksumMismatch, FileNotFoundError) as e:
-            failures[granularity] = str(e)
+
+    def ensure_loaded():
+        """Load any model not yet loaded. In a CI job the service container starts before the step
+        that downloads the models, so loading is retried on each request until it succeeds."""
+        for granularity, spec in models.items():
+            if granularity in loaded:
+                continue
+            try:
+                loaded[granularity] = registry.load(spec["folder"], spec["sha256"])
+                failures.pop(granularity, None)
+            except (registry.ChecksumMismatch, FileNotFoundError) as e:
+                failures[granularity] = str(e)
+
+    ensure_loaded()
 
     @app.before_request
     def authenticate():
@@ -55,6 +64,7 @@ def create_app(models: dict | None = None, token: str | None = None) -> Flask:
 
     @app.get("/health")
     def health():
+        ensure_loaded()
         return jsonify(
             models={g: {"version": m["version"], "sha256": m["bundle_sha256"],
                         "features": m["model"]["schema"]["features_in"]} for g, (m, _, _) in loaded.items()},
@@ -63,6 +73,7 @@ def create_app(models: dict | None = None, token: str | None = None) -> Flask:
     @app.post("/score")
     def score():
         t0 = time.perf_counter()
+        ensure_loaded()
         body = request.get_json(force=True)
         g = body.get("granularity")
         if g in failures:
