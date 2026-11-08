@@ -24,3 +24,17 @@ sensitivity_variants:                     # section 3.5.1; each reports AUC-PR, 
     drop commits made before 2010; partition boundaries are kept as in the primary corpus, so only
     the presence of the older commits changes (the calibration window does not move)
   reporting: descriptive, beside the primary results; no significance tests
+
+# ADDED 8 Nov 2026 (plan D6 item 4), before any of these models was fitted: the narrower ApacheJIT comparison
+# among four of Kamei et al.'s (2013) change-metric groups (section 3.8.2). Interpretation recorded here:
+# each group is used ALONE, and the 12-metric run of record is the reference.
+change_metric_groups:
+  groups:
+    size: [la, ld]
+    diffusion: [nf, nd, ns, ent]
+    history: [ndev, age, nuc]
+    experience: [aexp, arexp, asexp]
+  family: the single family chosen in the run of record (selection.json); within-project; 60 seconds; seed 42
+  data: the primary corpus and partitions, exactly as the run of record
+  measures: AUC-PR (uncalibrated test scores) and ROC-AUC per project and group; the mean over the 13 projects
+  reporting: descriptive, no significance tests (section 3.8.2)

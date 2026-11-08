@@ -109,3 +109,24 @@ first_check:
   minimum_anchors: 12                 # fewer makes the check uninformative
   reporting: descriptive only; per-anchor difference from its own chance level, mean and spread; mean recall
     for the system and each baseline with the number of anchors
+
+# ADDED 8 Nov 2026 (plan D6 item 4; agent's design under the student's overnight instruction "use your best
+# recommendation"), BEFORE any commit-level model was trained or scored: the exploratory static-versus-process
+# comparison at commit level (section 3.8.2; Table 3.6). The split date below was computed from label counts
+# alone, as commit_level requires: it is the author time of the 30th-latest R-SZZ inducing commit.
+static_vs_process:
+  corpus: data/mined/flask/commits.csv     # riskrank.mining.commits: 1,393 commits touching a source module, 131 inducing
+  split_date: "2018-04-27T19:27:31Z"       # test = commits at or after it (524 commits, 30 inducing, any fix to history end)
+  gap: the year before split_date (122 commits, used for nothing)
+  training: commits before the gap (747); bug-inducing only if the earliest fix is before split_date (82; 5 relabelled clean)
+  calibration: final fifth of the time from the first commit to the start of the gap; base = the rest
+  feature_sets:
+    static: [touched_size, touched_complexity]
+    static_process: [la, ld, nf, nd, ns, ent, ndev, age, nuc, aexp, arexp, asexp, touched_size, touched_complexity]
+  correlation_filter: within each family (static, process), as everywhere else
+  families: [lr, rf, lgbm, mlp]
+  tuning: expanding time folds on base data, 60 seconds per family and imbalance method, seed 42 (as the run of record; idle machine)
+  measures: AUC-PR on uncalibrated test scores with its chance level, ROC-AUC, Brier (calibrated)
+  comparison: AUC-PR(static_process) minus AUC-PR(static), per family; headline family = highest tuning AUC-PR on static_process
+  transfer_check: the deployed apachejit-jit-v1, unchanged, scores the same test commits; AUC-PR and ROC-AUC (Table 3.6)
+  reporting: effect sizes only, no significance tests (two-project mined corpus; Gin not yet mined)

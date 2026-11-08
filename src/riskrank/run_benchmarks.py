@@ -236,8 +236,14 @@ def run_pool(fn, items: list, s: dict, jobs: int, sink) -> None:
 def _read_jsonl(path: str) -> list[dict]:
     if not os.path.exists(path):
         return []
+    rows = []
     with open(path) as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+        for line in fh:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass  # a line cut short when a run was stopped: that task is simply redone on resume
+    return rows
 
 
 def _append(path: str, rows: list[dict]) -> None:

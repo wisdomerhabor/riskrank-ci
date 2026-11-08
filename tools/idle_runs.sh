@@ -4,6 +4,7 @@
 #   1. the within-project run of record (13 projects x 4 families, 60 s each) and its evaluation
 #   2. the cross-project arm (config/apachejit_d6.yaml) and its evaluation
 #   3. the three sensitivity variants with the family the run of record selected, and their evaluations
+#   4. Flask static-versus-process at commit level, then the ApacheJIT change-metric groups
 # Usage: tools/idle_runs.sh        (from the repository root; logs to logs/idle-<time>.log)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,4 +32,9 @@ for V in exclude_relabelled window_1y from_2010; do
   $PY -m riskrank.run_within --seconds 60 --seed 42 --families "$FAM" --variant "$V"
   $PY -m riskrank.evaluate "$(ls -td runs/within-*-$V | head -1)"
 done
+
+# D6 item 4 (pre-registered 8 Nov 2026): Flask commit level, static against static plus process, then the
+# ApacheJIT change-metric groups with the run of record's family. Groups last: it is the longest (~1.7 h).
+$PY -m riskrank.static_vs_process flask --seconds 60 --seed 42
+$PY -m riskrank.static_vs_process groups --run "$REC" --seconds 60 --seed 42
 echo "done $(date -u +%FT%TZ)"
