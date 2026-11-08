@@ -16,9 +16,9 @@ jobs:
       - name: Install the project and riskrank
         run: |
           if [ -f src/riskrank/__init__.py ]; then pip install -e ".[service]" pytest pytest-cov   # this repo IS riskrank
-          else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.4"
+          else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.5"
                python -m riskrank.test_env riskrank.yml
-               pip install --no-deps "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.4"; fi
+               pip install --no-deps "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.5"; fi
       - name: Run the suite with per-test coverage contexts
         run: |
           RISKRANK_DURATIONS=durations.json python -m pytest -q -p riskrank.durations_plugin \

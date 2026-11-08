@@ -8,8 +8,10 @@ Werkzeug) break tests written then. Two optional settings, both off by default:
     test_requirements: [requirements/tests.txt]   # the project's own pinned test requirements
     test_env_date: commit                          # resolve every package as of the tested commit's date
 
-The date is the committer date of the upstream commit being tested: HEAD^2 when HEAD is a sync merge
-(the replay), otherwise HEAD. Resolution uses uv's --exclude-newer, so nothing published after that
+The date is the committer date of the newest upstream commit in HEAD's history: the newest non-merge
+commit that changes anything other than RiskRank's own files (riskrank.yml and the two RiskRank
+workflows). That is the synced upstream commit after a replay merge, and the fork-point commit before
+any replay, even when HEAD is one of our own settings commits. Resolution uses uv's --exclude-newer, so nothing published after that
 date is installed. pytest-cov is resolved the same way, so it matches that era's pytest. Prints the
 date and the command for the build log. Without the settings it installs the project and pytest-cov
 normally.
@@ -23,12 +25,15 @@ import sys
 import yaml
 
 
+OURS = ["riskrank.yml", ".github/workflows/riskrank.yml", ".github/workflows/riskrank-coverage.yml"]
+
+
 def tested_commit_date() -> str:
-    parents = subprocess.run(["git", "rev-list", "--parents", "-n", "1", "HEAD"],
-                             capture_output=True, text=True, check=True).stdout.split()
-    rev = "HEAD^2" if len(parents) > 2 else "HEAD"
-    return subprocess.run(["git", "log", "-1", "--format=%cI", rev],
-                          capture_output=True, text=True, check=True).stdout.strip()
+    out = subprocess.run(["git", "log", "--no-merges", "--format=%ct %cI", "HEAD", "--", ".",
+                          *[f":(exclude){p}" for p in OURS]],
+                         capture_output=True, text=True, check=True).stdout.splitlines()
+    # newest by numeric timestamp: ISO strings with different UTC offsets do not sort as times
+    return max((int(t), iso) for t, iso in (line.split(" ", 1) for line in out))[1]
 
 
 def command(s: dict) -> list[str]:
