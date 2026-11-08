@@ -38,6 +38,12 @@ module_snapshots:
   observation_window_months: 12       # fixes counted after the snapshot
   process_period_months: 12           # churn, changes, prior fixes counted before the snapshot
   truncated_windows: discard          # snapshots whose window runs past history_end are dropped
+  truncated_process_period: discard   # AMENDED 8 Nov 2026, before any label: the first snapshot is
+                                      # the first quarter boundary >= 12 months after the first
+                                      # commit, so no process period is truncated either
+  size: Radon sloc (non-blank, non-comment source lines)
+  complexity: sum of Radon McCabe complexity over functions and methods (class totals not added)
+  prior_fixes: fix keywords alone, no issue labels (Table 3.7)
   calibration: final fifth of training snapshots by date
   rule: >
     A module is defective at a snapshot if a bug-fixing commit within the observation window
