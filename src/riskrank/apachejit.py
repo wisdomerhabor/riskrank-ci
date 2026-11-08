@@ -53,7 +53,24 @@ def load_raw(root: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return total, links
 
 
-def build(root: str) -> ApacheJIT:
+VARIANTS = (None, "exclude_relabelled", "window_1y", "from_2010")  # section 3.5.1 sensitivity variants
+WINDOW_TEST_END = pd.Timestamp("2019-01-01", tz=UTC)  # 2019 commits cannot be observed for a full year
+FROM_2010 = pd.Timestamp("2010-01-01", tz=UTC)
+
+
+def build(root: str, variant: str | None = None) -> ApacheJIT:
+    """The corpus with its primary labels, or one of the three pre-defined sensitivity variants:
+
+    exclude_relabelled  drop every commit whose label differs from the published one (training commits
+                        fixed only after 2016, and test commits fixed only after 2019), instead of
+                        treating them as clean
+    window_1y           a commit is bug-inducing only if its first fix came within one year of it, in
+                        every partition; the test period keeps only 2017 and 2018
+    from_2010           drop commits made before 2010; partition boundaries stay as in the primary
+                        corpus, so only the presence of the older commits changes
+    """
+    if variant not in VARIANTS:
+        raise ValueError(f"unknown variant {variant!r}")
     total, links = load_raw(root)
     df = total.copy()
 
@@ -73,6 +90,16 @@ def build(root: str) -> ApacheJIT:
     df["partition"] = _partition(df)
     df["label"] = _label(df)
     df = df[df["when"] < TEST_END]  # nothing after 2019 exists, but make it explicit
+
+    if variant == "exclude_relabelled":
+        relabelled = df["buggy"] & ~df["label"] & (df["partition"] != "gap")
+        df = df[~relabelled]
+    elif variant == "window_1y":
+        within_year = df["first_fix"] <= df["when"] + pd.DateOffset(years=1)
+        df = df.assign(label=df["buggy"] & within_year & (df["partition"] != "gap"))
+        df = df[~((df["partition"] == "test") & (df["when"] >= WINDOW_TEST_END))]
+    elif variant == "from_2010":
+        df = df[df["when"] >= FROM_2010]
 
     return ApacheJIT(commits=df.reset_index(drop=True), report=_report(df))
 

@@ -1,6 +1,7 @@
 """Fit every within-project ApacheJIT model and record it (NFR13). Never scores a test partition.
 
     python -m riskrank.run_within --seconds 60 --seed 42
+    python -m riskrank.run_within --variant window_1y --families lgbm     # a sensitivity variant
 
 Writes, under runs/<run-id>/:
     manifest.json                      dataset checksum, code commit, library versions, settings
@@ -26,7 +27,7 @@ from importlib.metadata import version
 import joblib
 import numpy as np
 
-from riskrank.apachejit import FEATURES, build
+from riskrank.apachejit import FEATURES, VARIANTS, build
 from riskrank.models import FAMILIES, fit_final, tune
 
 RAW = "data/raw"
@@ -54,18 +55,20 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--families", nargs="+", default=list(FAMILIES))
     ap.add_argument("--projects", nargs="*", default=None)
+    ap.add_argument("--variant", choices=[v for v in VARIANTS if v], default=None)
     args = ap.parse_args()
 
-    run_id = datetime.now(timezone.utc).strftime("within-%Y%m%dT%H%M%SZ")
+    run_id = datetime.now(timezone.utc).strftime("within-%Y%m%dT%H%M%SZ") + (f"-{args.variant}" if args.variant else "")
     out = os.path.join("runs", run_id)
     os.makedirs(out)
 
-    commits = build(os.path.join(RAW, "apachejit")).commits
+    commits = build(os.path.join(RAW, "apachejit"), args.variant).commits
     projects = args.projects or sorted(commits["project"].unique())
 
     manifest = {
         "run_id": run_id,
         "kind": "within-project",
+        "variant": args.variant,
         "dataset": {"source": "Zenodo 5907847", "file": ZIP, "sha256": sha256(ZIP)},
         "code_commit": git_commit(),
         "python": platform.python_version(),

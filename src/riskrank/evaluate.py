@@ -201,12 +201,14 @@ def family_tests(per_project: dict[str, dict]) -> list[dict]:
 
 def main(run_dir: str) -> None:
     sel = json.load(open(os.path.join(run_dir, "selection.json")))
+    manifest = json.load(open(os.path.join(run_dir, "manifest.json")))
     frozen = json.dumps(SETTINGS, sort_keys=True)
+    kind, variant = manifest.get("kind", "within-project"), manifest.get("variant")
     out = {"settings": SETTINGS, "settings_sha256": hashlib.sha256(frozen.encode()).hexdigest(),
-           "chosen_family": sel["chosen_family"], "per_family": {}}
-    commits = build("data/raw/apachejit").commits
-    within = os.path.join(run_dir, "within")
-    for fam in sel["mean_tuning_aucpr"]:
+           "kind": kind, "variant": variant, "chosen_family": sel["chosen_family"], "per_family": {}}
+    commits = build("data/raw/apachejit", variant).commits
+    within = os.path.join(run_dir, "cross" if kind == "cross-project" else "within")
+    for fam in sel.get("families", sel["mean_tuning_aucpr"]):
         per_project = {}
         for folder in sorted(os.listdir(within)):
             mv = joblib.load(os.path.join(within, folder, f"{fam}.joblib"))
@@ -215,7 +217,10 @@ def main(run_dir: str) -> None:
             per_project[proj] = evaluate_project(mv, test)
         out["per_family"][fam] = {"per_project": per_project}
     chosen = out["per_family"][sel["chosen_family"]]
-    chosen["family_tests"] = family_tests(chosen["per_project"])
+    # Significance tests only for the primary within-project run (section 3.10.4); cross-project results
+    # and the sensitivity variants are reported descriptively.
+    if kind == "within-project" and not variant:
+        chosen["family_tests"] = family_tests(chosen["per_project"])
     with open(os.path.join(run_dir, "evaluation.json"), "w") as f:
         json.dump(out, f, indent=2, default=lambda o: None if isinstance(o, float) and math.isnan(o) else str(o))
     print("wrote", os.path.join(run_dir, "evaluation.json"))
