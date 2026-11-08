@@ -27,7 +27,6 @@ import json
 import os
 import re
 import subprocess
-from collections import defaultdict
 
 import pandas as pd
 from radon.complexity import cc_visit
@@ -68,23 +67,55 @@ def history(end: str) -> list[dict]:
     return rows
 
 
-def lineage(commits: list[dict]) -> dict[str, str]:
-    """Map every path a module ever had to one stable id: its most recent path."""
-    parent: dict[str, str] = {}
-    for c in commits:
+def process_window(commits: list[dict], live: list[str], lo, hi, keywords) -> dict[str, dict]:
+    """Churn, changes and prior fixes in [lo, hi) for each module live at `hi`, keyed by its path at hi.
+
+    Walks commits newest first. `alias` maps the path a module had at that point in time to its
+    path at `hi`; a rename old -> new re-points the alias to `old` for everything earlier. A path
+    is only ever followed backwards through renames that happened, in time order, so a later file
+    re-created at an old path (Flask's 2023 app.py split) never inherits the old file's history.
+    """
+    alias = {p: p for p in live}
+    out = {p: {"churn": 0, "changes": 0, "prior_fixes": 0} for p in live}
+    for c in reversed(commits):
+        if c["when"] >= hi:
+            continue
+        if c["when"] < lo:
+            break
+        fix = keywords.search(c["message"]) is not None
         for f in c["files"]:
-            if f["old"] != f["new"]:
-                parent[f["old"]] = f["new"]
+            q = alias.get(f["new"])
+            if q is not None and f["lines"] > 0:  # a pure move modifies no content
+                out[q]["churn"] += f["lines"]
+                out[q]["changes"] += 1
+                out[q]["prior_fixes"] += int(fix)
+        for f in c["files"]:
+            if f["old"] != f["new"] and f["new"] in alias:
+                alias[f["old"]] = alias.pop(f["new"])
+    return out
 
-    def final(p: str) -> str:
-        seen = set()
-        while p in parent and p not in seen:
-            seen.add(p)
-            p = parent[p]
-        return p
 
-    paths = {f[k] for c in commits for f in c["files"] for k in ("old", "new")}
-    return {p: final(p) for p in paths}
+def forward_paths(commits: list[dict], live: list[str], start, fixes_in_window: list[dict]) -> set[str]:
+    """Snapshot modules blamed by the given fixes, following renames forward from `start`."""
+    cur = {p: p for p in live}  # snapshot path -> its path at the current point in time
+    blamed: set[str] = set()
+    pending = sorted(fixes_in_window, key=lambda f: f["when"])
+    i = 0
+    for c in commits:
+        if c["when"] <= start:
+            continue
+        while i < len(pending) and pending[i]["when"] < c["when"]:
+            blamed |= {q for q, now in cur.items() if now in pending[i]["blamed"]}
+            i += 1
+        if i == len(pending):
+            break
+        renames = {f["old"]: f["new"] for f in c["files"] if f["old"] != f["new"]}
+        for q, now in cur.items():
+            if now in renames:
+                cur[q] = renames[now]
+    for f in pending[i:]:
+        blamed |= {q for q, now in cur.items() if now in f["blamed"]}
+    return blamed
 
 
 # ---------------------------------------------------------------- measurement
@@ -113,7 +144,6 @@ def build() -> pd.DataFrame:
     keywords = re.compile(cfg["bug_fix_rule"]["keywords"], re.IGNORECASE)
 
     commits = history(cfg["history_end_commit"])
-    stable = lineage(commits)
     history_end = commits[-1]["when"]
     first = commits[0]["when"] + pd.DateOffset(months=period)
     last = history_end - pd.DateOffset(months=months)
@@ -126,36 +156,23 @@ def build() -> pd.DataFrame:
         if r["inducing"]:
             fixes.append({"when": pd.Timestamp(r["fix_date"]).tz_convert("UTC"),
                           "inducing_when": pd.Timestamp(r["inducing_date"]).tz_convert("UTC"),
-                          "blamed": {stable.get(p, p) for p in r["blamed_files"]}})
+                          "blamed": set(r["blamed_files"])})
 
     rows, unparsable = [], 0
     for s in snaps:
         tree = git("rev-list", "-1", f"--before={s.isoformat()}", cfg["history_end_commit"]).strip()
         modules = [p for p in git("ls-tree", "-r", "--name-only", tree).splitlines() if is_source(p, cfg)]
-        lo = s - pd.DateOffset(months=period)
-        churn, changes, prior = defaultdict(int), defaultdict(int), defaultdict(int)
-        for c in commits:
-            if lo <= c["when"] < s:
-                fix = keywords.search(c["message"]) is not None
-                for f in c["files"]:
-                    mid = stable.get(f["new"], f["new"])
-                    churn[mid] += f["lines"]
-                    changes[mid] += 1
-                    prior[mid] += int(fix)
+        proc = process_window(commits, modules, s - pd.DateOffset(months=period), s, keywords)
         hi = s + pd.DateOffset(months=months)
-        defective = set()
-        for fx in fixes:
-            if s < fx["when"] <= hi and fx["inducing_when"] <= s:
-                defective |= fx["blamed"]
+        window = [fx for fx in fixes if s < fx["when"] <= hi and fx["inducing_when"] <= s]
+        defective = forward_paths(commits, modules, s, window)
         for p in modules:
             sm = static_metrics(tree, p)
             if sm is None:
                 unparsable += 1
                 continue
-            mid = stable.get(p, p)
-            rows.append({"snapshot": s, "module": p, "module_id": mid, "tree": tree,
-                         "size": sm[0], "complexity": sm[1], "churn": churn[mid],
-                         "changes": changes[mid], "prior_fixes": prior[mid], "label": mid in defective})
+            rows.append({"snapshot": s, "module": p, "tree": tree, "size": sm[0], "complexity": sm[1],
+                         **proc[p], "label": p in defective})
     df = pd.DataFrame(rows)
     df.attrs["unparsable_modules"] = unparsable
     return df
