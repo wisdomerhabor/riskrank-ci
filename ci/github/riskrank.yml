@@ -8,12 +8,12 @@ jobs:
   riskrank:
     runs-on: ubuntu-latest
     env:
-      RISKRANK_REF: v0.1.3                      # riskrank-ci release: code and scoring image
+      RISKRANK_REF: v0.1.4                      # riskrank-ci release: code and scoring image
       MODELS_REF: v0.1.2                        # riskrank-ci release holding the model bundles
       MODELS_DIR: /tmp/riskrank-models          # outside the workspace: checkout must be able to clean it
     services:
       scoring:                                  # job service container, reachable only on the job network (NFR4)
-        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.3
+        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.4
         ports: ["8000:8000"]
         env:
           RISKRANK_MODELS: /models/models.json
@@ -27,8 +27,9 @@ jobs:
       - name: Install riskrank and the project's tests' dependencies
         run: |
           if [ -f src/riskrank/__init__.py ]; then pip install -e ".[service]" pytest pytest-cov   # this repo IS riskrank
-          else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}" pytest pytest-cov
-               pip install -e . || echo "repository is not pip-installable; tests run from source"; fi
+          else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}"
+               python -m riskrank.test_env riskrank.yml   # the project's own test environment (dated if configured)
+               pip install --no-deps "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}"; fi
       - name: Fetch models and coverage map
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
