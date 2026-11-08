@@ -65,3 +65,21 @@ deployment_model:
 # end, below the 30 counted pushes Table 1.1 requires. An earlier count of 34 used the GitHub API's
 # date filter, which also includes commits authored before but merged after the date. 2025-03-30
 # leaves 34 (margin 4). The deployed module model is re-fitted for it as flask-module-v2.
+
+# ADDED 8 Nov 2026 (student's decision), before any held-out score was computed: the offline
+# evaluation of the deployed module model (FR13, FR15). Held-out data are the snapshots dated after
+# the fork point, so no held-out label overlaps the training or calibration labels (the last training
+# snapshot is 2024-01-01). The two-project mined corpus is reported as effect sizes only (section 3.5).
+offline_evaluation:
+  model: flask-module-v2
+  held_out: every module snapshot dated after fork_point   # 2025-04-01, 2025-07-01, 2025-10-01
+  ranked_set: each snapshot on its own; results per snapshot and their mean over snapshots
+  budget: 20 percent; artefacts and lines (offline fractional boundary); keys default and effort
+  baselines:
+    random: exact k/n for artefacts; mean of 100 seeded permutations (seed 0) for lines
+    largest_first: size descending, then module path ascending
+    smallest_first: size ascending, then module path ascending
+    recency: time of the module's last content-changing commit before the snapshot, newest first
+  curve: offline recall at lines budgets 0-100 percent in 1-point steps, mean over snapshots
+  calibration: reliability in 10 equal-width bins over all held-out rows pooled; Brier score
+  significance: none (too few projects); effect direction and rank-biserial over the snapshots only
