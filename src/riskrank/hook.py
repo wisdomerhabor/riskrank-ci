@@ -75,7 +75,7 @@ def module_features(repo: str, after: str, modules: list[str], months: int, keyw
     for m in modules:
         sm = static_metrics(after, m, repo=repo) or (None, None)
         rows.append({"id": m, "size": sm[0], "complexity": sm[1], **proc[m]})
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=["id", *MODULE_FEATURES])  # a push may touch no module at all
 
 
 def default_order(out: str, tests: list[str], reason: str, settings_used: dict) -> dict:
