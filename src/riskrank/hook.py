@@ -155,8 +155,12 @@ def run(a) -> dict:
         h = History(a.repo, a.after)
         team_shas = [x for x in shas if x in h.by_sha and h.by_sha[x].author in team]
         if team_shas:
+            # send exactly the features the deployed model expects (the commit model drops asexp, A4)
+            with urllib.request.urlopen(f"{a.service}/health", timeout=timeout) as hr:
+                expected = json.loads(hr.read())["models"]["commit"]["features"]
             r = post(f"{a.service}/score", {"granularity": "commit", "repository": s.get("repository"),
-                     "artefacts": [{"id": x, "features": h.features(x)} for x in team_shas]}, timeout)
+                     "artefacts": [{"id": x, "features": {f: h.features(x)[f] for f in expected}}
+                                   for x in team_shas]}, timeout)
             jit = {"status": "assessed", "model_version": r["model_version"], "transferred": r["transferred"],
                    "commits": [{"id": c["id"], "p": c["p"], "in_training_range": c["in_training_range"],
                                 "above_threshold": c["p"] > s["risk_threshold"],
