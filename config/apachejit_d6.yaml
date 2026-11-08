@@ -1,0 +1,24 @@
+# Pre-registered 8 Nov 2026, before any cross-project or sensitivity-variant model was fitted or scored
+# (plan D6 item 1; section 3.5.1 variants, section 3.8.2 cross-project rule, section 3.10.4 families).
+# Both arms run on an otherwise idle workstation, like the run of record, because tuning is time-budgeted.
+
+cross_project:
+  held_out: each of the 13 projects in turn
+  training: the other 12 projects' base partitions, pooled
+  calibration_and_mcc_threshold: the other 12 projects' calibration partitions, pooled (section 3.8.2)
+  families: [lr, rf, lgbm]                # same families, seconds (60) and seed (42) as the run of record
+  scored: the held-out project's test partition, primary labels
+  reported: per project and per family, descriptively; outside the significance tests (section 3.10.4)
+
+sensitivity_variants:                     # section 3.5.1; each reports AUC-PR, Brier score and defect recall
+  family: the single family chosen in the run of record (selection.json), within-project, seconds 60, seed 42
+  exclude_relabelled: >-
+    drop every commit whose label differs from the published one instead of treating it as clean
+    (training-side commits fixed only after 2016, and test-side commits fixed only after 2019)
+  window_1y: >-
+    bug-inducing only if the first fix came within one year of the commit, in every partition;
+    the test period keeps 2017 and 2018 only
+  from_2010: >-
+    drop commits made before 2010; partition boundaries are kept as in the primary corpus, so only
+    the presence of the older commits changes (the calibration window does not move)
+  reporting: descriptive, beside the primary results; no significance tests
