@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 THRESHOLD = 0.8
+STATIC = {"size", "complexity", "touched_size", "touched_complexity"}  # static code metrics (Table 3.7)
 
 
 class SchemaMismatch(ValueError):
@@ -39,11 +40,11 @@ class FeaturePipeline:
     def __init__(self, features: list[str], families: dict[str, str] | None = None):
         """`features` in feature-table order; `families` maps feature -> 'static' | 'process'.
 
-        Without `families` every feature is treated as one family, which is the ApacheJIT case
-        (all 12 are change metrics).
+        Without `families`, size and complexity measures are static and everything else is a process
+        metric. All 12 ApacheJIT change metrics are therefore one (process) family.
         """
         self.features = list(features)
-        self.families = families or {f: "process" for f in features}
+        self.families = families or {f: "static" if f in STATIC else "process" for f in features}
         missing = set(self.features) - set(self.families)
         if missing:
             raise ValueError(f"no family given for {sorted(missing)}")

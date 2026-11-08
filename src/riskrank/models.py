@@ -130,6 +130,17 @@ def _fit_one(family, params, imbalance, seed, tr_frame, features):
     return pipe, model
 
 
+def effort_size(frame: pd.DataFrame) -> np.ndarray:
+    """Size for the lines budget: churn (la + ld) for commits, lines of code for modules."""
+    if "la" in frame and "ld" in frame:
+        return (frame["la"] + frame["ld"]).to_numpy()
+    return frame["size"].to_numpy()
+
+
+def ident(frame: pd.DataFrame) -> np.ndarray:
+    return (frame["commit_id"] if "commit_id" in frame else frame["id"]).to_numpy()
+
+
 def cv_score(family, params, imbalance, seed, base, features, folds) -> tuple[float, float]:
     """Mean AUC-PR and mean recall at the 20% lines budget over the time folds."""
     aps, recalls = [], []
@@ -141,8 +152,8 @@ def cv_score(family, params, imbalance, seed, base, features, folds) -> tuple[fl
         aps.append(average_precision_score(va_frame["label"], s))
         ranked = rank(
             pd.DataFrame(
-                {"id": va_frame["commit_id"].to_numpy(), "p": s, "raw": s,
-                 "size": (va_frame["la"] + va_frame["ld"]).to_numpy(),
+                {"id": ident(va_frame), "p": s, "raw": s,
+                 "size": effort_size(va_frame),
                  "label": va_frame["label"].to_numpy()}
             ),
             "default",
