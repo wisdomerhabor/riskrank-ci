@@ -10,7 +10,7 @@ jobs:
     env:
       RISKRANK_REF: v0.1.1                      # riskrank-ci release: code and scoring image
       MODELS_REF: v0.1.0                        # riskrank-ci release holding the model bundles
-      MODELS_DIR: ${{ github.workspace }}/.riskrank/models
+      MODELS_DIR: /tmp/riskrank-models          # outside the workspace: checkout must be able to clean it
     services:
       scoring:                                  # job service container, reachable only on the job network (NFR4)
         image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.1
@@ -18,7 +18,7 @@ jobs:
         env:
           RISKRANK_MODELS: /models/models.json
         volumes:
-          - ${{ github.workspace }}/.riskrank/models:/models   # filled by a later step; service loads lazily
+          - /tmp/riskrank-models:/models        # created root-owned by Docker; filled by a later step
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}                  # full history: process metrics and JIT features need it
@@ -32,12 +32,12 @@ jobs:
       - name: Fetch models and coverage map
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
-          mkdir -p "$MODELS_DIR" && cd "$MODELS_DIR"
+          sudo mkdir -p "$MODELS_DIR" && sudo chown -R "$(id -u):$(id -g)" "$MODELS_DIR" && cd "$MODELS_DIR"
           gh release download "$MODELS_REF" -R wisdomerhabor/riskrank-ci -p 'models-*.tar.gz'
           for f in models-*.tar.gz; do tar xzf "$f"; done
           python -m riskrank.models_json "$GITHUB_WORKSPACE/riskrank.yml" > "$MODELS_DIR/models.json"
           cd "$GITHUB_WORKSPACE"
-          gh release download coverage-latest -p coverage-map.json -D .riskrank || echo "no coverage map yet"
+          mkdir -p .riskrank && gh release download coverage-latest -p coverage-map.json -D .riskrank || echo "no coverage map yet"
       - name: List current tests
         run: RISKRANK_COLLECT=.riskrank/tests.jsonl python -m pytest --collect-only -q -p riskrank.order_plugin > /dev/null || true
       - name: Score, rank and plan (never fails the build)
