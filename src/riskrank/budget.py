@@ -105,6 +105,36 @@ def marked_lines_runtime(ranked: pd.DataFrame, size: str = "size", b: float = BU
     return pd.Series(marked, index=ranked.index)
 
 
+def mark(ranked: pd.DataFrame, unit: str, b: float, key: str, size: str = "size") -> pd.Series:
+    """Runtime budget marking of a ranked frame (FR9), shared by the CI hook and the dashboard preview.
+
+    artefacts: the top ceil(b * n), at least one; lines: from the top, boundary artefact kept whole.
+    Zero-size artefacts are never marked under the lines budget or the effort key.
+    """
+    if not len(ranked):
+        return pd.Series([], dtype=bool, index=ranked.index)
+    if unit == "artefacts":
+        k = max(1, math.ceil(b * len(ranked)))
+        marked = pd.Series([i < k for i in range(len(ranked))], index=ranked.index)
+    elif unit == "lines":
+        marked = marked_lines_runtime(ranked, size=size, b=b)
+    else:
+        raise ValueError(f"unknown budget unit {unit!r}")
+    if key == "effort" or unit == "lines":
+        marked &= ranked[size] > 0
+    return marked
+
+
+def realised_share(ranked: pd.DataFrame, marked: pd.Series, unit: str, size: str = "size") -> float | None:
+    """Share of the ranked set actually marked: of artefacts, or of their lines."""
+    if not len(ranked):
+        return None
+    if unit == "artefacts":
+        return float(marked.mean())
+    total = ranked[size].sum()
+    return float(ranked.loc[marked, size].sum() / total) if total else None
+
+
 def random_recall(
     frame: pd.DataFrame,
     budget: str,

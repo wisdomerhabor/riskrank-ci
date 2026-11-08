@@ -12,7 +12,7 @@ import yaml
 def main() -> None:
     s = yaml.safe_load(open(sys.argv[1]))
     root = sys.argv[2] if len(sys.argv) > 2 else "/models"
-    out = {g: {"folder": f"{root}/{m['version']}", "sha256": m["sha256"]} for g, m in s["models"].items()}
+    out = {g: {"folder": f"{root}/{m['version']}", "sha256": m["sha256"]} for g, m in s["models"].items() if m}
     print(json.dumps(out, indent=1))
 
 

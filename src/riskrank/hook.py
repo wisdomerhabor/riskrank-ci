@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import subprocess
@@ -28,11 +27,12 @@ import urllib.request
 import pandas as pd
 
 from riskrank import settings as settings_mod
-from riskrank.budget import marked_lines_runtime, rank
+from riskrank.budget import mark, rank, realised_share
 from riskrank.jit_features import FEATURES as JIT_FEATURES
 from riskrank.jit_features import History
 from riskrank.mining.snapshots import history as module_history
 from riskrank.mining.snapshots import process_window, static_metrics
+from riskrank.plan_format import PLAN_FORMAT
 from riskrank.testplan import build_plan
 
 MODULE_FEATURES = ["size", "complexity", "churn", "changes", "prior_fixes"]
@@ -79,11 +79,35 @@ def module_features(repo: str, after: str, modules: list[str], months: int, keyw
 
 
 def default_order(out: str, tests: list[str], reason: str, settings_used: dict) -> dict:
-    plan = {"status": "default order", "reason": reason, "settings": settings_used,
+    plan = {"format": PLAN_FORMAT, "status": "default order", "reason": reason, "settings": settings_used,
             "tests": [{"test": t, "position": i + 1, "in_budget": False} for i, t in enumerate(tests)]}
     _write(out, plan, tests, [], f"## RiskRank\n\n⚠️ **Default test order.** {reason}\n")
     print(f"::warning title=RiskRank::{reason} Running the default test order.")
     return plan
+
+
+def commit_level(a, s: dict, shas: list[str], team: set[str], timeout: float) -> dict:
+    """Score the deploying team's commits with the just-in-time model (FR8). Without a commit model in
+    the settings, escalation is not configured. A scoring failure leaves the run partial (NFR3)."""
+    if not (s.get("models") or {}).get("commit"):
+        return {"status": "not configured", "commits": []}
+    try:
+        h = History(a.repo, a.after)
+        team_shas = [x for x in shas if x in h.by_sha and h.by_sha[x].author in team]
+        if not team_shas:
+            return {"status": "no team commits", "commits": []}
+        # send exactly the features the deployed model expects (the commit model drops asexp, A4)
+        with urllib.request.urlopen(f"{a.service}/health", timeout=timeout) as hr:
+            expected = json.loads(hr.read())["models"]["commit"]["features"]
+        r = post(f"{a.service}/score", {"granularity": "commit", "repository": s.get("repository"),
+                 "artefacts": [{"id": x, "features": {f: h.features(x)[f] for f in expected}}
+                               for x in team_shas]}, timeout)
+        return {"status": "assessed", "model_version": r["model_version"], "transferred": r["transferred"],
+                "commits": [{"id": c["id"], "p": c["p"], "in_training_range": c["in_training_range"],
+                             "above_threshold": c["p"] > s["risk_threshold"],
+                             "reason_codes": c["reason_codes"][:5]} for c in r["scores"]]}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError) as e:
+        return {"status": "not assessed", "error": f"{type(e).__name__}", "commits": []}
 
 
 def run(a) -> dict:
@@ -115,15 +139,7 @@ def run(a) -> dict:
     if len(scored):
         scored = scored.merge(mf[["id", "size"]], on="id")
         ranked = rank(scored, s["ranking_key"])
-        b = s["budget"] / 100
-        if s["budget_unit"] == "artefacts":
-            k = max(1, math.ceil(b * len(ranked)))
-            marked = pd.Series([i < k for i in range(len(ranked))])
-        else:
-            marked = marked_lines_runtime(ranked, b=b)
-        if s["ranking_key"] == "effort" or s["budget_unit"] == "lines":
-            marked &= ranked["size"] > 0
-        ranked["in_budget"] = marked.to_numpy()
+        ranked["in_budget"] = mark(ranked, s["budget_unit"], s["budget"] / 100, s["ranking_key"]).to_numpy()
         ranked["flagged"] = ranked["p"] > s["risk_threshold"]
     else:
         ranked = pd.DataFrame(columns=["id", "p", "raw", "size", "in_budget", "flagged", "reason_codes"])
@@ -149,37 +165,22 @@ def run(a) -> dict:
     plan_seconds = time.perf_counter() - plan_t0
 
     # ---- commit level: the risk summary and build escalation (FR8, FR16)
-    jit = {"status": "not assessed", "commits": []}
     shas = git(a.repo, "rev-list", "--no-merges", f"{a.before}..{a.after}").split()
-    try:
-        h = History(a.repo, a.after)
-        team_shas = [x for x in shas if x in h.by_sha and h.by_sha[x].author in team]
-        if team_shas:
-            # send exactly the features the deployed model expects (the commit model drops asexp, A4)
-            with urllib.request.urlopen(f"{a.service}/health", timeout=timeout) as hr:
-                expected = json.loads(hr.read())["models"]["commit"]["features"]
-            r = post(f"{a.service}/score", {"granularity": "commit", "repository": s.get("repository"),
-                     "artefacts": [{"id": x, "features": {f: h.features(x)[f] for f in expected}}
-                                   for x in team_shas]}, timeout)
-            jit = {"status": "assessed", "model_version": r["model_version"], "transferred": r["transferred"],
-                   "commits": [{"id": c["id"], "p": c["p"], "in_training_range": c["in_training_range"],
-                                "above_threshold": c["p"] > s["risk_threshold"],
-                                "reason_codes": c["reason_codes"][:5]} for c in r["scores"]]}
-        else:
-            jit = {"status": "no team commits", "commits": []}
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError) as e:
-        jit = {"status": "not assessed", "error": f"{type(e).__name__}", "commits": []}
+    jit = commit_level(a, s, shas, team, timeout)
     escalate = any(c["above_threshold"] and c["in_training_range"] for c in jit["commits"])
 
     plan = {
-        "status": "complete", "settings": {k: v for k, v in s.items() if k != "deploying_team"},
+        "format": PLAN_FORMAT,
+        "status": "partial" if jit["status"] == "not assessed" else "complete",  # partial: module plan kept
+        "settings": {k: v for k, v in s.items() if k != "deploying_team"},
         "push": {"before": a.before, "after": a.after, "commits": len(shas)},
-        "module_model": resp.get("model_version"), "modules_touched": len(modules),
+        "module_model": resp.get("model_version"), "module_transferred": resp.get("transferred"),
+        "modules_touched": len(modules),
         "modules_unparsable": unparsable,
-        "ranking": [{"rank": i + 1, "module": r.id, "p": r.p, "size": r.size, "in_budget": bool(r.in_budget),
+        "ranking": [{"rank": i + 1, "module": r.id, "p": r.p, "raw": r.raw, "size": r.size, "in_budget": bool(r.in_budget),
                      "flagged": bool(r.flagged), "reason_codes": r.reason_codes}
                     for i, r in enumerate(ranked.itertuples())],
-        "realised_share": _realised(ranked, s["budget_unit"]),
+        "realised_share": realised_share(ranked, ranked["in_budget"].astype(bool), s["budget_unit"]) if len(ranked) else None,
         "test_plan": tp.to_json(), "commit_level": jit, "escalated": escalate,
         "timing_seconds": {"module_scoring": round(module_seconds, 3), "test_ordering": round(plan_seconds, 3),
                            "hook_total": round(time.perf_counter() - t_start, 3)},
@@ -189,15 +190,6 @@ def run(a) -> dict:
     if escalate:
         print("::warning title=RiskRank escalation::A commit's risk exceeds the threshold. See the plan.")
     return plan
-
-
-def _realised(ranked: pd.DataFrame, unit: str) -> float | None:
-    if not len(ranked):
-        return None
-    if unit == "artefacts":
-        return float(ranked["in_budget"].mean())
-    total = ranked["size"].sum()
-    return float(ranked.loc[ranked["in_budget"], "size"].sum() / total) if total else None
 
 
 def summary(plan: dict) -> str:
@@ -212,10 +204,13 @@ def summary(plan: dict) -> str:
         lines += ["**Flagged modules** (risk above threshold):", ""] + [f"- module `{r['module']}`: {r['p']:.2f}" for r in flagged] + [""]
     above = [c for c in jit["commits"] if c["above_threshold"]]
     outside = [c for c in jit["commits"] if not c["in_training_range"]]
-    lines += [f"Commit-level risk: {jit['status']}; {len(above)} commit(s) above threshold"
-              + (f", {len(outside)} outside the training range" if outside else "") + ".",
-              f"Build escalated: **{'yes' if plan['escalated'] else 'no'}** (escalation never fails the build).", "",
-              "Full plan: the `riskrank-plan` artifact of this run."]
+    if jit["status"] == "not configured":
+        lines += ["Build escalation: **not configured** (no just-in-time model in the settings).", ""]
+    else:
+        lines += [f"Commit-level risk: {jit['status']}; {len(above)} commit(s) above threshold"
+                  + (f", {len(outside)} outside the training range" if outside else "") + ".",
+                  f"Build escalated: **{'yes' if plan['escalated'] else 'no'}** (escalation never fails the build).", ""]
+    lines += ["Full plan: the `riskrank-plan` artifact of this run."]
     if st["stale_map_warning"]:
         lines.insert(2, "⚠️ The coverage map is more than two refresh intervals old.")
     return "\n".join(lines) + "\n"

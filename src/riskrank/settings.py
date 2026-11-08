@@ -6,7 +6,7 @@
     risk_threshold: 0.5            # 0..1
     models:
       module: {version: flask-module-v1, sha256: <64 hex>}
-      commit: {version: apachejit-jit-v1, sha256: <64 hex>}
+      commit: {version: apachejit-jit-v1, sha256: <64 hex>}   # optional: omitted, escalation is not configured
     scoring_timeout_seconds: 60    # > 0
     coverage_refresh_interval: weekly   # must match the coverage workflow's schedule
     stop_at_first_failure: false   # optional, off by default
@@ -51,6 +51,8 @@ def validate(s: dict, registry_versions: set[str] | None = None, coverage_cron: 
         p.append("risk_threshold must be between 0 and 1")
     models = s.get("models") or {}
     for g in ("module", "commit"):
+        if g == "commit" and not models.get("commit"):
+            continue  # no just-in-time model: commits are not scored and build escalation is not configured
         m = models.get(g) or {}
         if not m.get("version"):
             p.append(f"models.{g}.version is missing")
