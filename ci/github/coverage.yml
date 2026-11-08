@@ -16,7 +16,7 @@ jobs:
         with: {python-version: "3.13"}
       - name: Install the project and riskrank
         run: |
-          if [ -f src/riskrank/__init__.py ]; then pip install -e ".[service]" pytest pytest-cov   # this repo IS riskrank
+          if [ -f src/riskrank/__init__.py ]; then pip install -e ".[service,dashboard]" pytest pytest-cov   # this repo IS riskrank
           else pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.6"
                python -m riskrank.test_env riskrank.yml
                pip install --no-deps "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.6"; fi
