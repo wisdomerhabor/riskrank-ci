@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}   # full history: the dated test environment reads upstream commit dates
       - uses: actions/setup-python@v5
         with: {python-version: "3.13"}
       - name: Install the project and riskrank
