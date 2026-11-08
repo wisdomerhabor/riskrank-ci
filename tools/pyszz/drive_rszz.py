@@ -78,7 +78,9 @@ def main(fixes_path, repos_dir, out_path):
             mine_h = mine.hexsha if mine is not None else None
             assert stock_h == mine_h, f"file attribution diverged from stock R-SZZ on {h}: {stock_h} vs {mine_h}"
             rec |= {"inducing": stock_h,
-                    "inducing_date": mine.committed_datetime.isoformat() if mine is not None else None,
+                    # read through `stock`: its R-SZZ object (and repo copy) is still alive here,
+                    # whereas each per-file MA-SZZ object deletes its temporary repo copy on cleanup
+                    "inducing_date": stock.committed_datetime.isoformat() if stock is not None else None,
                     "candidates_per_file": per_file,
                     "blamed_files": [p for p, c in per_file.items() if stock_h in c]}
         rec["seconds"] = round(time.time() - t0, 1)
