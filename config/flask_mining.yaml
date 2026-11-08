@@ -1,0 +1,49 @@
+# PRE-REGISTERED Flask mining rules (Chapter Three, section 3.5.1).
+# Fixed 8 Nov 2026 by the student, BEFORE any SZZ label was produced. The commit that adds this
+# file is the evidence of that order. Changing anything here after labelling must be a new,
+# separately reported variant, never an edit to this file.
+
+repository: pallets/flask
+history_end_commit: 49943b5a94413a530761350f04e896f76e8d620e   # main, 30 Oct 2026
+
+source_modules:            # modules = source files; SZZ traces only these lines
+  - "flask/*.py"           # layout until June 2019
+  - "src/flask/*.py"       # layout from June 2019
+exclude_paths: ["tests/", "docs/", "examples/"]
+
+bug_fix_rule:
+  # A non-merge commit is a bug fix if (a) it references an issue labelled `bug`, or (b) its
+  # message contains a fix keyword as a whole word, AND its subject does not match an exclusion.
+  issue_reference: "#(\\d+)"
+  issue_label: bug
+  keywords: "\\b(fix|fixes|fixed|fixing|bug|bugs|defect|defects|patch|patched|patches)\\b"
+  exclude_subject: "\\b(typo|typos|typing|type hints?|mypy|lint|flake8|docs?|docstrings?|style|format|formatting|pre-commit|ci)\\b"
+  case_insensitive: true
+  issue_cache: data/github/flask_issues.json   # labels and created_at, fetched 8 Nov 2026
+
+szz:
+  tool: PySZZ v2, commit 67971581881993231b6918128436e1f06239c781, image tools/pyszz
+  variant: R-SZZ                      # MA-SZZ candidates, latest by committed date
+  config: conf/rszz_issues_filter.yml  # as published: max_change_size 20, -M, -C same commit
+  issue_date_filter: true             # applied where the fix references an issue with a date
+  file_ext_to_parse: [py]
+  cosmetic_filter: as built into MA-SZZ (whitespace, comments, meta changes)
+
+module_snapshots:
+  interval: quarterly                 # 1 Jan, 1 Apr, 1 Jul, 1 Oct, UTC
+  observation_window_months: 12       # fixes counted after the snapshot
+  process_period_months: 12           # churn, changes, prior fixes counted before the snapshot
+  truncated_windows: discard          # snapshots whose window runs past history_end are dropped
+  calibration: final fifth of training snapshots by date
+  rule: >
+    A module is defective at a snapshot if a bug-fixing commit within the observation window
+    changed lines in it that R-SZZ traces to an inducing commit made on or before the snapshot.
+
+commit_level:
+  split_date: latest date leaving >= 30 defect-inducing commits in the held-out period, set from
+              label counts alone before any model is trained
+  gap: final year before the split date
+  calibration: final fifth of the time before the gap
+
+deployment_model:
+  fork_point: "2025-11-07"            # plan D5: deployed Flask model sees only pre-fork history
