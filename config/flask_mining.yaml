@@ -6,10 +6,14 @@
 repository: pallets/flask
 history_end_commit: 49943b5a94413a530761350f04e896f76e8d620e   # main, 30 Oct 2026
 
-source_modules:            # modules = source files; SZZ traces only these lines
-  - "flask/*.py"           # layout until June 2019
-  - "src/flask/*.py"       # layout from June 2019
-exclude_paths: ["tests/", "docs/", "examples/"]
+source_modules:            # modules = .py files at any depth under these roots; SZZ traces only these
+  - "flask/"               # layout until June 2019
+  - "src/flask/"           # layout from June 2019
+exclude_paths: ["tests/", "docs/", "examples/", "flask/testsuite/"]
+# AMENDED 8 Nov 2026, still before any label was produced: the first version used the globs
+# "flask/*.py" and "src/flask/*.py", which would have dropped the json/ and sansio/ subpackages
+# (6 of today's 24 modules) and did not exclude the pre-2014 in-package test suite
+# flask/testsuite/. Corrected to roots plus that exclusion.
 
 bug_fix_rule:
   # A non-merge commit is a bug fix if (a) it references an issue labelled `bug`, or (b) its
