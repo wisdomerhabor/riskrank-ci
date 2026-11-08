@@ -86,7 +86,7 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
     if not codes:
         st.info("No reason codes stored for this score.")
         return
-    st.altair_chart(reason_chart(codes), use_container_width=True)
+    st.altair_chart(reason_chart(codes), width="stretch")
     st.caption("Bars show feature contributions to the model's **uncalibrated** score: dark raises risk, "
                "light lowers it. They show what the model associates with risk, not what causes defects.")
     attribution = ((model or {}).get("record") or {}).get("explanation", {}).get("attribution", "")
@@ -112,18 +112,21 @@ def main() -> None:
     with top_r:
         project = st.selectbox("Project", projects)
         runs = db.runtime_runs(project)
-        labels = {int(r.id): f"{str(r.created)[:16].replace('T', ' ')} · {str(r.commit_after or '')[:7]} · run {r.build_ref}"
+        labels = {f"{str(r.created)[:16].replace('T', ' ')} · {str(r.commit_after or '')[:7]} · run {r.build_ref}": int(r.id)
                   for r in runs.itertuples()}
-        run_id = st.selectbox("Build", list(labels), format_func=labels.get)
+        run_id = labels[st.selectbox("Build", list(labels))]
     run = db.run(run_id)
     ranking = db.ranking(run_id)
     commits = db.commit_scores(project)
     commits_this = commits[commits["build_ref"] == run["build_ref"]]
-    model = db.model(run["module_model"])
+    # the module model the build was configured with (a build that touched no module scored nothing)
+    module_model = run["module_model"] or (((run.get("detail") or {}).get("settings") or {}).get("models") or {}) \
+        .get("module", {}).get("version")
+    model = db.model(module_model)
     with top_l:
         st.markdown("## Regression-Test-Prioritisation Dashboard")
         transferred = " · **scores transferred** (model applied outside its training corpus)" if run["transferred"] else ""
-        st.markdown(f"Project: `{project}` · Model: `{run['module_model'] or 'none'}` (calibrated){transferred} · "
+        st.markdown(f"Project: `{project}` · Model: `{module_model or 'none'}` (calibrated){transferred} · "
                     f"Build run {run['build_ref']} · commit `{str(run['commit_after'] or '')[:7]}`")
         st.markdown(f"{escalation_text(run, commits_this)} · signed in: **{user}**")
     if st.sidebar.button("Sign out"):
@@ -142,12 +145,12 @@ def main() -> None:
     c = st.columns([1.2, 1.4, 1.2, 1.2, 1.2])
     granularity = c[0].selectbox("Granularity", ["modules", "commits"])
     commit_view = granularity == "commits"
-    key = c[1].selectbox("Ranking key", ["default", "effort"], index=["default", "effort"].index(stored["ranking_key"]),
-                         format_func={"default": "calibrated risk", "effort": "effort-normalised"}.get,
-                         disabled=commit_view)
-    unit = c[2].selectbox("Budget unit", ["artefacts", "lines"], index=["artefacts", "lines"].index(stored["budget_unit"]),
-                          format_func={"artefacts": "artefacts (modules)", "lines": "lines of code"}.get,
-                          disabled=commit_view)
+    keys = {"calibrated risk": "default", "effort-normalised": "effort"}
+    units = {"modules (artefacts)": "artefacts", "lines of code": "lines"}
+    key = keys[c[1].selectbox("Ranking key", list(keys), index=list(keys.values()).index(stored["ranking_key"]),
+                              disabled=commit_view)]
+    unit = units[c[2].selectbox("Budget unit", list(units), index=list(units.values()).index(stored["budget_unit"]),
+                                disabled=commit_view)]
     budget = c[3].number_input("Budget value (%)", 1.0, 100.0, stored["budget"], 1.0, disabled=commit_view)
     threshold = c[4].number_input("Risk threshold", 0.0, 1.0, stored["risk_threshold"], 0.05)
     preview = (key, unit, budget, threshold) != (stored["ranking_key"], stored["budget_unit"], stored["budget"],
@@ -171,8 +174,8 @@ def main() -> None:
                 view = commits.assign(commit=commits["commit"].str[:10], flagged=commits["p"] > threshold,
                                       outside_training_range=~commits["in_training_range"].astype(bool))
                 ev = st.dataframe(view[["commit", "p", "flagged", "outside_training_range", "created", "model_version"]]
-                                  .rename(columns={"p": "risk"}), on_select="rerun", selection_mode="single-row",
-                                  hide_index=True, use_container_width=True, key="commits")
+                                  .rename(columns={"p": "risk", "created": "scored in build at"}), on_select="rerun", selection_mode="single-row",
+                                  hide_index=True, width="stretch", key="commits")
                 sel = ev.selection.rows[0] if ev.selection.rows else 0
                 st.caption("Commit scores come from a model trained on Java (ApacheJIT) and are labelled transferred. "
                            "Escalation counts only commits inside the training range.")
@@ -207,7 +210,7 @@ def main() -> None:
                 styled = show.style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"]
                                                        else "" for _ in row], axis=1).format({"risk": "{:.2f}"})
                 ev = st.dataframe(styled, on_select="rerun", selection_mode="single-row", hide_index=True,
-                                  use_container_width=True, key="modules")
+                                  width="stretch", key="modules")
                 sel = ev.selection.rows[0] if ev.selection.rows else 0
                 st.caption(f"Shaded rows = inside the budget. Flagged = risk above the {threshold:.2f} threshold"
                            + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else ".")
@@ -238,7 +241,7 @@ def main() -> None:
                                    "in_budget": "in budget"})
                   .style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] else ""
                                             for _ in row], axis=1))
-        st.dataframe(styled, hide_index=True, use_container_width=True, height=300)
+        st.dataframe(styled, hide_index=True, width="stretch", height=300)
         trailing = stats.get("trailing", {})
         missing = stats.get("ranked_modules_missing_from_map", [])
         st.markdown(
@@ -252,13 +255,13 @@ def main() -> None:
 
     # ---------------------------------------------------------------- evaluation panels
     e1, e2, e3 = st.columns(3)
-    off = db.latest_offline(run["module_model"])
+    off = db.latest_offline(module_model)
     with e1:
         st.markdown("#### Cost-effectiveness (offline, lines-of-code budget)")
         if not off:
-            st.info(f"No offline evaluation is stored for `{run['module_model']}` yet.")
+            st.info(f"No offline evaluation is stored for `{module_model}` yet.")
         else:
-            st.caption(f"`{run['module_model']}` · corpus: {off['corpus']} · evaluated {str(off['created'])[:10]} · "
+            st.caption(f"`{module_model}` · corpus: {off['corpus']} · evaluated {str(off['created'])[:10]} · "
                        "default key, independent of the settings above")
             curves = (off.get("detail") or {}).get("curves", {})
             d = pd.DataFrame([{"ordering": name, "lines inspected (%)": x * 100, "defect recall (%)": y * 100}
@@ -269,7 +272,7 @@ def main() -> None:
                     strokeDash=alt.StrokeDash("ordering:N", sort=BASELINE_ORDER),
                     color=alt.Color("ordering:N", sort=BASELINE_ORDER))
                 rule = alt.Chart(pd.DataFrame({"x": [20]})).mark_rule(color="#b5834c").encode(x="x:Q")
-                st.altair_chart(line + rule, use_container_width=True)
+                st.altair_chart(line + rule, width="stretch")
             st.markdown(f"Recall at the budget: system **{off['recall']:.3f}**; " + "; ".join(
                 f"{b['baseline']} {b['recall']:.3f}" for b in off["baselines"] if b["recall"] is not None))
     with e2:
@@ -285,7 +288,7 @@ def main() -> None:
                 y=alt.Y("observed:Q", title="observed defect rate", scale=alt.Scale(domain=[0, 1])),
                 tooltip=["mean_p", "observed", "n"])
             diag = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(color="grey").encode(x="x", y="y")
-            st.altair_chart(diag + pts, use_container_width=True)
+            st.altair_chart(diag + pts, width="stretch")
     with e3:
         st.markdown("#### Risk trend over recent builds")
         trend = db.risk_trend(project, limit=12)
@@ -296,7 +299,7 @@ def main() -> None:
             trend["build"] = trend["created"].astype(str).str[:16] + " " + trend["commit_after"].str[:7]
             st.altair_chart(alt.Chart(trend).mark_line(point=True).encode(
                 x=alt.X("build:N", sort=None, axis=alt.Axis(labels=False)), y=alt.Y("mean_in_budget_risk:Q", title="average risk"),
-                tooltip=["build", "mean_in_budget_risk", "in_budget_modules"]), use_container_width=True)
+                tooltip=["build", "mean_in_budget_risk", "in_budget_modules"]), width="stretch")
 
 
 main()
