@@ -134,12 +134,13 @@ def recall_block(frame: pd.DataFrame) -> dict:
 
     largest = frame.sort_values(["size", "id"], ascending=[False, True], kind="mergesort")
     smallest = frame.sort_values(["size", "id"], ascending=[True, True], kind="mergesort")
-    recent = frame.sort_values(["when", "id"], ascending=[False, True], kind="mergesort")
     out["largest_first_artefacts"] = recall_artefacts(largest)
     out["largest_first_lines"] = recall_lines(largest)
     out["smallest_first_lines"] = recall_lines(smallest)
-    out["recency_artefacts"] = recall_artefacts(recent)
-    out["recency_lines"] = recall_lines(recent)
+    if "when" in frame:  # the benchmark corpora have no history, so no recency baseline
+        recent = frame.sort_values(["when", "id"], ascending=[False, True], kind="mergesort")
+        out["recency_artefacts"] = recall_artefacts(recent)
+        out["recency_lines"] = recall_lines(recent)
     out["realised_share_artefacts"] = math.ceil(BUDGET * len(frame)) / len(frame)
     out["zero_size"] = int((frame["size"] <= 0).sum())
     out["n"], out["defects"] = int(len(frame)), int(frame["label"].sum())

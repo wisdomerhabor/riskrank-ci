@@ -24,6 +24,11 @@ Implementation choices not fixed by Chapter Three (recorded with every model ver
     folds = 4 expanding windows; search = seeded random search; seconds per (family, imbalance)
     = `seconds`; trials completed is recorded because a time budget makes the count machine-
     dependent, so the tuned hyperparameters (not the search) are what make a run reproducible.
+
+Benchmark corpora (NASA MDP, PROMISE; config/benchmarks.yaml): no dates exist, so tuning folds are
+stratified 4-fold (`folds="stratified"`), and every candidate gets the same NUMBER of trials
+(`trials=`) instead of the same seconds, so the search itself is reproducible from the seed. Those
+runs set N_JOBS = 1 so a model's result never depends on how many processes run beside it.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, matthews_corrcoef
+from sklearn.model_selection import StratifiedKFold
 from sklearn.neural_network import MLPClassifier
 from sklearn.utils.class_weight import compute_sample_weight
 
@@ -50,6 +56,7 @@ FAMILIES = ("lr", "rf", "lgbm", "mlp")
 SCALED = {"lr", "mlp"}  # tree ensembles use unscaled features (section 3.5.2)
 N_FOLDS = 4
 ISOTONIC_MIN = 1000
+N_JOBS = -1  # threads per random forest / LightGBM model; benchmark runs set 1
 
 
 # ---------------------------------------------------------------- search spaces
@@ -94,12 +101,12 @@ def make(family: str, params: dict, imbalance: str, seed: int):
         return RandomForestClassifier(
             **params,
             class_weight="balanced_subsample" if weighted else None,
-            n_jobs=-1,
+            n_jobs=N_JOBS,
             random_state=seed,
         )
     if family == "lgbm":
         return LGBMClassifier(
-            **params, is_unbalance=weighted, random_state=seed, n_jobs=-1, verbose=-1
+            **params, is_unbalance=weighted, random_state=seed, n_jobs=N_JOBS, verbose=-1
         )
     if family == "mlp":  # class weighting is applied as balanced sample weights in _fit_one
         return MLPClassifier(**params, early_stopping=True, validation_fraction=0.1, n_iter_no_change=10,
@@ -128,6 +135,15 @@ def time_folds(base: pd.DataFrame, n_folds: int = N_FOLDS) -> list[tuple[np.ndar
         if y_tr.min() != y_tr.max() and y_va.any():  # both classes to train, a defect to find
             folds.append((tr, va))
     return folds
+
+
+def stratified_folds(base: pd.DataFrame, n_folds: int = N_FOLDS, seed: int = 0) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Shuffled stratified folds, for corpora with no dates: every fold keeps the defective share."""
+    y = base["label"].to_numpy().astype(int)
+    if min(y.sum(), len(y) - y.sum()) < n_folds:
+        raise ValueError(f"fewer than {n_folds} examples of a class for stratified tuning folds")
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    return list(skf.split(np.zeros(len(y)), y))
 
 
 def _fit_one(family, params, imbalance, seed, tr_frame, features):
@@ -189,18 +205,32 @@ class Tuned:
     cv_recall_lines: float
     trials: dict = field(default_factory=dict)  # trials completed per imbalance method
     weight_vs_smote: dict = field(default_factory=dict)
+    budget: dict = field(default_factory=dict)  # {"seconds": s} or {"trials": n} per imbalance method
+    folds: str = "time"  # "time" (expanding windows) or "stratified"
 
 
-def tune(base, features, family, seconds: float, seed: int) -> Tuned:
-    folds = time_folds(base)
+def tune(base, features, family, seconds: float | None = None, seed: int = 42, *,
+         trials: int | None = None, folds: str = "time") -> Tuned:
+    """Random search per imbalance method, under EITHER a seconds budget or a fixed trial count."""
+    if (seconds is None) == (trials is None):
+        raise ValueError("give exactly one of seconds= or trials=")
+    if trials is not None and trials < 1:
+        raise ValueError("trials must be at least 1")
+    kind = folds
+    if kind == "time":
+        folds = time_folds(base)
+    elif kind == "stratified":
+        folds = stratified_folds(base, seed=seed)
+    else:
+        raise ValueError(f"unknown fold kind {kind!r}")
     if not folds:
         raise ValueError("no usable time folds in the base data")
     best: dict[str, tuple] = {}
-    trials: dict[str, int] = {}
+    done: dict[str, int] = {}
     for imbalance in ("weight", "smote"):
         rng = np.random.default_rng(seed)
-        deadline, n, top = time.monotonic() + seconds, 0, None
-        while n == 0 or time.monotonic() < deadline:
+        deadline, n, top = time.monotonic() + (seconds or 0), 0, None
+        while (n < trials) if trials is not None else (n == 0 or time.monotonic() < deadline):
             params = sample_params(family, rng)
             try:
                 ap, rec = cv_score(family, params, imbalance, seed, base, features, folds)
@@ -209,7 +239,7 @@ def tune(base, features, family, seconds: float, seed: int) -> Tuned:
             n += 1
             if top is None or ap > top[1]:
                 top = (params, ap, rec)
-        trials[imbalance] = n
+        done[imbalance] = n
         if top is not None:
             best[imbalance] = top
     w = best["weight"]
@@ -222,10 +252,12 @@ def tune(base, features, family, seconds: float, seed: int) -> Tuned:
         params=pick[0],
         cv_aucpr=pick[1],
         cv_recall_lines=pick[2],
-        trials=trials,
+        trials=done,
         weight_vs_smote={
             k: {"cv_aucpr": round(v[1], 4), "cv_recall_lines": round(v[2], 4)} for k, v in best.items()
         },
+        budget={"trials": trials} if trials is not None else {"seconds": seconds},
+        folds=kind,
     )
 
 
@@ -290,7 +322,11 @@ class ModelVersion:
                 "trials": self.tuned.trials,
                 "weight_vs_smote": self.tuned.weight_vs_smote,
                 "folds": N_FOLDS,
-                "search": "seeded random search, equal seconds per family and imbalance method",
+                "fold_kind": self.tuned.folds,
+                "budget_per_imbalance": self.tuned.budget,
+                "search": "seeded random search, equal "
+                          + ("trials" if "trials" in self.tuned.budget else "seconds")
+                          + " per family and imbalance method",
             },
             "calibration": {
                 "method": self.calibrator.method,

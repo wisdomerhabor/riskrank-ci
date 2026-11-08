@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from riskrank.models import fit_calibrator, fit_final, time_folds, tune
+from riskrank import models
+from riskrank.models import fit_calibrator, fit_final, stratified_folds, time_folds, tune
 
 FEATS = ["la", "ld", "nf"]
 
@@ -67,3 +68,32 @@ def test_platt_preserves_order():
     cal = fit_calibrator(raw, y)
     p = cal(np.sort(raw), "platt")
     assert np.all(np.diff(p) > 0)
+
+
+def test_stratified_folds_keep_the_defective_share():
+    base = synthetic_commits(400)
+    share = base["label"].mean()
+    folds = stratified_folds(base, seed=3)
+    assert len(folds) == 4
+    for tr, va in folds:
+        assert abs(base["label"].iloc[va].mean() - share) < 0.02
+        assert not set(tr) & set(va)
+
+
+@pytest.mark.parametrize("family", ["lr", "rf"])
+def test_trial_budget_is_exact_and_reproducible(family, monkeypatch):
+    monkeypatch.setattr(models, "N_JOBS", 1)
+    base = synthetic_commits(300)
+    a = tune(base, FEATS, family, seed=7, trials=3, folds="stratified")
+    b = tune(base, FEATS, family, seed=7, trials=3, folds="stratified")
+    assert a.trials == {"weight": 3, "smote": 3}
+    assert (a.params, a.imbalance, a.cv_aucpr) == (b.params, b.imbalance, b.cv_aucpr)
+    assert a.budget == {"trials": 3} and a.folds == "stratified"
+
+
+def test_tune_needs_exactly_one_budget():
+    base = synthetic_commits(200)
+    with pytest.raises(ValueError):
+        tune(base, FEATS, "lr", seed=1)
+    with pytest.raises(ValueError):
+        tune(base, FEATS, "lr", 1.0, 1, trials=2)

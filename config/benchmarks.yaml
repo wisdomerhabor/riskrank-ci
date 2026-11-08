@@ -1,0 +1,68 @@
+# Pre-registered 8 Nov 2026, before any NASA MDP or PROMISE model was tuned, fitted or scored
+# (plan D6 item 2; sections 3.5.1, 3.8.2, 3.10.4). Student decision 8 Nov 2026: "Trials 20, 10x10".
+#
+# DEPARTURE FROM SECTION 3.8.2, recorded here and to be reported in Chapter Four: section 3.8.2 gives
+# each candidate "the same fixed amount of computing time" for tuning. On these two corpora only, each
+# candidate instead gets the same fixed NUMBER of random-search trials. Reason: a time budget makes the
+# trial count depend on machine load, so these offline comparator results could not be reproduced from
+# the seed (NFR13), and the runs would need an idle machine for several nights. The ApacheJIT, cross-
+# project ApacheJIT and Flask models keep the time budget. Benchmark models are offline comparators only
+# and are never deployed (Table 3.6).
+
+corpora:
+  nasa:
+    source: figshare 10.6084/m9.figshare.6071675 (Shepperd et al., 2018), CC BY 4.0, md5 f812f233529166c238cfb932334c97b4
+    version: "D'' (problem cases and duplicates removed)"
+    datasets: [CM1, JM1, KC1, KC3, MC1, MC2, MW1, PC1, PC2, PC3, PC4, PC5]   # KC4 is published empty
+    project_unit: each dataset is one project (12 projects)
+    module: function; defective when the defect attribute is Y/true
+    features: every metric supplied with the dataset (within-project); the 20 metrics shared by all 12 (cross-project)
+    size: LOC_TOTAL
+  promise:
+    source: Jureczko & Madeyski (2010), the authors' Zenodo records (benchmarks_manifest.json), CC BY 4.0
+    systems: [camel, ivy, jedit, log4j, lucene, poi, prop, synapse, velocity, xalan, xerces]
+    pairs: every consecutive release pair k -> k+1 in version order (31 pairs; 42 releases)
+    project_unit: each system is one project (11 projects); results averaged over its pairs
+    module: class; defective when bug > 0
+    features: the 20 CK-family metrics supplied (shared by every system)
+    size: loc
+
+tuning:
+  search: seeded random search, the same search spaces as models.py
+  budget: 20 trials per family and per imbalance method (class weighting, SMOTE)
+  inner_folds: stratified 4-fold on the base data only (no dates exist); pipeline and SMOTE refitted in every fold
+  objective: mean AUC-PR; SMOTE kept only if it raises mean recall at the 20% lines budget over weighting
+  families: [lr, rf, lgbm, mlp]
+  seed: 42
+  threads: one per model (results do not depend on the number of worker processes)
+
+within_project:
+  nasa:
+    outer: 10 x 10 repeated stratified cross-validation (100 rounds per dataset), seed 42
+    calibration: a stratified fifth of each round's training data (section 3.8.2: an inner fold of the round)
+    base: the other four fifths; tuning and the final fit use only these
+  promise:
+    outer: train on release k, test on release k+1
+    calibration: a stratified fifth of release k
+    base: the other four fifths of release k
+  calibration_rule: one map per base model; isotonic if the calibration set has >= 1,000 modules or Platt's slope <= 0, else Platt
+  mcc_threshold: fixed on the calibration set
+
+cross_project:
+  nasa: hold out one dataset; train on the other 11 pooled, on the 20 shared metrics; score the whole held-out dataset
+  promise: hold out one system (every release); train on all releases of the other 10 pooled; score each held-out release, averaged per system
+  calibration_and_mcc_threshold: a stratified fifth of the pooled source data (section 3.8.2)
+  reported: per project and per family, descriptively; outside the significance tests
+
+measures:
+  predictive: ROC-AUC and AUC-PR on uncalibrated scores (with chance levels), MCC at the fixed threshold, Brier score (chosen map, other map, uncalibrated)
+  recall: 20% budget, artefacts and lines, default and effort keys; uncalibrated effort key (descriptive)
+  baselines: random (exact for artefacts, mean of 100 seeded orders for lines), largest-first, smallest-first (lines); no recency (no history)
+  averaging: per round, then the mean over a project's rounds (NASA) or pairs (PROMISE); each project is one observation
+
+selection_and_tests:
+  order: phase 1 tunes every round and stores only hyperparameters; selection.json is written from tuning AUC-PR; only then does phase 2 refit and score any test fold
+  family: per corpus, the single family with the highest mean tuning AUC-PR across its projects
+  tests: the 8-test family {random, size comparator} x {artefacts, lines} x {default, effort}; exact two-sided Wilcoxon, zeros dropped; Holm-Bonferroni within the family; rank-biserial effect size
+  two_corpora: NASA and PROMISE are separate families (different metric sets)
+  cross_validation_note: NASA results are reported separately from the time- and release-ordered results (section 3.5.2)

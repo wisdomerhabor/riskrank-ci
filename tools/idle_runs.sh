@@ -1,7 +1,7 @@
 #!/bin/bash
 # Time-budgeted training runs that need an otherwise idle workstation (equal seconds per family only
 # compare fairly when nothing else competes for the CPU). In order:
-#   1. the within-project run of record (13 projects x 3 families, 60 s each) and its evaluation
+#   1. the within-project run of record (13 projects x 4 families, 60 s each) and its evaluation
 #   2. the cross-project arm (config/apachejit_d6.yaml) and its evaluation
 #   3. the three sensitivity variants with the family the run of record selected, and their evaluations
 # Usage: tools/idle_runs.sh        (from the repository root; logs to logs/idle-<time>.log)
@@ -9,6 +9,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 if command -v colima >/dev/null && colima status >/dev/null 2>&1; then
   echo "colima is running: stop it first (colima stop) so the run is not timed against a busy CPU"; exit 1
+fi
+if pgrep -f "riskrank.run_benchmarks" >/dev/null; then
+  echo "a benchmark run is using the CPU: wait for it to finish so the run is not timed against a busy CPU"; exit 1
 fi
 LOG="logs/idle-$(date -u +%Y%m%dT%H%M%SZ).log"; mkdir -p logs
 exec > >(tee -a "$LOG") 2>&1
