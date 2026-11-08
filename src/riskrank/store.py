@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, MetaData, String,
-                        Table, UniqueConstraint, create_engine, func, select)
+                        Table, UniqueConstraint, create_engine, event, func, select)
 
 meta = MetaData()
 
@@ -134,6 +134,8 @@ TIE_BREAK = "uncalibrated score, highest first; then ascending identifier"
 class Store:
     def __init__(self, url: str = "sqlite:///riskrank.db"):
         self.engine = create_engine(url)
+        if self.engine.dialect.name == "sqlite":  # enforce foreign keys as PostgreSQL does (NFR11)
+            event.listen(self.engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
         meta.create_all(self.engine)
 
     # ---------------------------------------------------------------- writes
@@ -175,6 +177,12 @@ class Store:
         jit = plan.get("commit_level", {}) if complete else {}
         after = plan.get("push", {}).get("after")
         with self.engine.begin() as c:
+            # a run may name a model whose release record could not be read yet: keep a placeholder row,
+            # filled in later by put_model
+            for version, gran in [(plan.get("module_model"), "module"), (jit.get("model_version"), "commit")]:
+                if version and not c.execute(select(model_version.c.version)
+                                             .where(model_version.c.version == version)).first():
+                    c.execute(model_version.insert().values(version=version, granularity=gran))
             map_id = None
             if stats.get("coverage_map_commit"):
                 map_id = self._get_or_add(c, coverage_map, project=project, commit=stats["coverage_map_commit"])
@@ -344,6 +352,13 @@ class Store:
             for t in meta.sorted_tables:
                 if rows.get(t.name):
                     c.execute(t.insert(), rows[t.name])
+            if self.engine.dialect.name == "postgresql":
+                # rows arrive with their ids, so move each id sequence past the largest one copied
+                for t in meta.sorted_tables:
+                    if "id" in t.c and isinstance(t.c.id.type, Integer) and t.c.id.primary_key:
+                        c.exec_driver_sql(f"SELECT setval(pg_get_serial_sequence('{t.name}', 'id'), "
+                                          f"COALESCE((SELECT MAX(id) FROM {t.name}), 0) + 1, false)")
+
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
@@ -364,11 +379,28 @@ class Store:
         return r[0] if r else None
 
 
+def migrate(source: str, target: str) -> dict[str, int]:
+    """Copy every row from one store to another, empty one (NFR11), and check the counts match."""
+    rows = Store(source).dump()
+    dest = Store(target)
+    if any(dest.dump().values()):
+        raise SystemExit("target store is not empty")
+    dest.load(rows)
+    counts = {k: len(v) for k, v in dest.dump().items()}
+    assert counts == {k: len(v) for k, v in rows.items()}, "row counts differ after migration"
+    return counts
+
+
 def json_default(o):
     return o.isoformat() if hasattr(o, "isoformat") else str(o)
 
 
-if __name__ == "__main__":  # python -m riskrank.store <url>  -> prints table row counts
+if __name__ == "__main__":
+    # python -m riskrank.store <url>                  -> table row counts
+    # python -m riskrank.store migrate <from> <to>    -> copy every row into an empty store (NFR11)
     import sys
-    st = Store(sys.argv[1] if len(sys.argv) > 1 else "sqlite:///riskrank.db")
-    print(json.dumps({k: len(v) for k, v in st.dump().items()}, indent=1))
+    if sys.argv[1:2] == ["migrate"]:
+        print(json.dumps(migrate(sys.argv[2], sys.argv[3]), indent=1))
+    else:
+        st = Store(sys.argv[1] if len(sys.argv) > 1 else "sqlite:///riskrank.db")
+        print(json.dumps({k: len(v) for k, v in st.dump().items()}, indent=1))

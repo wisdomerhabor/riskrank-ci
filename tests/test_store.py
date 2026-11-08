@@ -130,3 +130,16 @@ def test_commit_model_is_optional_in_settings():
          "models": {"module": {"version": "m1", "sha256": "a" * 64}}, "scoring_timeout_seconds": 60,
          "coverage_refresh_interval": "weekly"}
     assert validate(s) == []
+
+
+def test_foreign_keys_are_enforced_and_unknown_models_get_a_placeholder(tmp_path):
+    s = Store(f"sqlite:///{tmp_path}/fk.db")      # no model records stored at all
+    rid = s.put_runtime_run("o/r", "1", "2026-11-08T10:00:00Z", PLAN)
+    assert s.model("m1")["record"] is None and s.model("c1")["granularity"] == "commit"
+    import sqlalchemy
+    from riskrank.store import ranked_item
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        with s.engine.begin() as c:
+            c.execute(ranked_item.insert().values(run_id=rid, rank=99, prediction_id=12345))
+    s.put_model({"version": "m1", "granularity": "module", "algorithm": "lr"})
+    assert s.model("m1")["algorithm"] == "lr"
