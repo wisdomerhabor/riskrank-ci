@@ -1,0 +1,26 @@
+# Per-test coverage map (FR17): one full suite run with per-test contexts, published as a release
+# asset. The schedule must match coverage_refresh_interval in riskrank.yml (weekly = Monday 03:00 UTC).
+name: riskrank-coverage
+on:
+  schedule: [{cron: "0 3 * * 1"}]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13"}
+      - run: pip install -e . pytest pytest-cov "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@v0.1.0"
+      - name: Run the suite with per-test coverage contexts
+        run: |
+          RISKRANK_DURATIONS=durations.json python -m pytest -q -p riskrank.durations_plugin \
+            --cov=. --cov-context=test --cov-report= || true
+          python -m riskrank.build_map --data .coverage --repo . --durations durations.json --out coverage-map.json
+      - name: Publish as the coverage-latest release asset
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          gh release view coverage-latest >/dev/null 2>&1 || gh release create coverage-latest --title "Coverage map" --notes "Per-test coverage map (RiskRank FR17)." --latest=false
+          gh release upload coverage-latest coverage-map.json --clobber

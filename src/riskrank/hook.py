@@ -39,6 +39,14 @@ MODULE_FEATURES = ["size", "complexity", "churn", "changes", "prior_fixes"]
 FIX_KEYWORDS = r"\b(fix|fixes|fixed|fixing|bug|bugs|defect|defects|patch|patched|patches)\b"
 
 
+def read_tests(path: str | None) -> list[str]:
+    """Current test ids, as JSON lines written by riskrank.order_plugin (RISKRANK_COLLECT)."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
 def git(repo: str, *args: str) -> str:
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
 
@@ -80,7 +88,7 @@ def default_order(out: str, tests: list[str], reason: str, settings_used: dict) 
 
 def run(a) -> dict:
     t_start = time.perf_counter()
-    tests = [l.strip() for l in open(a.tests) if l.strip()] if a.tests and os.path.exists(a.tests) else []
+    tests = read_tests(a.tests)
     raw, problems = settings_mod.load(a.settings)
     if problems:
         return default_order(a.out, tests, "Invalid settings: " + "; ".join(problems), raw)
@@ -227,7 +235,7 @@ def main() -> None:
     try:
         run(a)
     except Exception as e:  # NFR3: the hook never fails the build
-        tests = [l.strip() for l in open(a.tests)] if a.tests and os.path.exists(a.tests) else []
+        tests = read_tests(a.tests)
         default_order(a.out, tests, f"Unexpected error ({type(e).__name__}: {e}).", {})
 
 

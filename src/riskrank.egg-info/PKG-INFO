@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: riskrank
+Version: 0.1.0
+Requires-Python: >=3.13
+Requires-Dist: imbalanced-learn==0.14.2
+Requires-Dist: lightgbm==4.7.0
+Requires-Dist: numpy==2.5.4
+Requires-Dist: pandas==3.1.1
+Requires-Dist: scikit-learn==1.9.1
+Requires-Dist: shap==0.54.1
+Requires-Dist: PyYAML==6.0.3
+Requires-Dist: radon==6.0.1
+Requires-Dist: Flask==3.1.3
+Requires-Dist: gunicorn==26.2.0
+Requires-Dist: coverage

@@ -1,0 +1,53 @@
+# RiskRank CI adapter for GitHub Actions (NFR14: the only platform-specific part).
+# Copy into <deployment repo>/.github/workflows/riskrank.yml, beside a riskrank.yml settings file.
+name: riskrank
+on: push
+permissions:
+  contents: read
+jobs:
+  riskrank:
+    runs-on: ubuntu-latest
+    env:
+      RISKRANK_REF: v0.1.0                      # riskrank-ci release holding code, image and models
+      MODELS_DIR: ${{ github.workspace }}/.riskrank/models
+    services:
+      scoring:                                  # job service container, reachable only on the job network (NFR4)
+        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.0
+        ports: ["8000:8000"]
+        env:
+          RISKRANK_MODELS: /models/models.json
+        volumes:
+          - ${{ github.workspace }}/.riskrank/models:/models   # filled by a later step; service loads lazily
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}                  # full history: process metrics and JIT features need it
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13"}
+      - name: Install riskrank and the project's tests' dependencies
+        run: |
+          pip install "riskrank @ git+https://github.com/wisdomerhabor/riskrank-ci@${RISKRANK_REF}" pytest pytest-cov
+          pip install -e . || true
+      - name: Fetch models and coverage map
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          mkdir -p "$MODELS_DIR" && cd "$MODELS_DIR"
+          gh release download "$RISKRANK_REF" -R wisdomerhabor/riskrank-ci -p 'models-*.tar.gz'
+          for f in models-*.tar.gz; do tar xzf "$f"; done
+          python -m riskrank.models_json riskrank.yml "$MODELS_DIR" > "$MODELS_DIR/models.json" || true
+          cd "$GITHUB_WORKSPACE"
+          gh release download coverage-latest -p coverage-map.json -D .riskrank || echo "no coverage map yet"
+      - name: List current tests
+        run: RISKRANK_COLLECT=.riskrank/tests.jsonl python -m pytest --collect-only -q -p riskrank.order_plugin > /dev/null || true
+      - name: Score, rank and plan (never fails the build)
+        run: |
+          BEFORE="${{ github.event.before }}"
+          case "$BEFORE" in 0000000000000000000000000000000000000000|"") BEFORE="$(git rev-parse HEAD~1)";; esac
+          python -m riskrank.hook --repo . --before "$BEFORE" --after "${{ github.sha }}" \
+            --settings riskrank.yml --service http://localhost:8000 \
+            --coverage .riskrank/coverage-map.json --tests .riskrank/tests.jsonl --out riskrank-plan
+          cat riskrank-plan/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Run tests in plan order
+        run: python -m riskrank.run_tests riskrank-plan riskrank.yml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: riskrank-plan, path: riskrank-plan/, retention-days: 7}
