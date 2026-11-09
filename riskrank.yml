@@ -5,7 +5,7 @@ budget_unit: lines              # artefacts | lines
 ranking_key: default            # default | effort
 risk_threshold: 0.5
 models:
-  module: {version: flask-module-v2, sha256: 9f9fe767fcc1c1617c95b839b43dcee7ecf53acf6d4b460f95f6f16b6eb64be5}
+  module: {version: flask-module-v3, sha256: fcb0640b2cd23163bf7c5bac389b165ef415d5a7737d9c994ffe37103672f4d9}
   commit: {version: apachejit-jit-v1, sha256: 519cd8c7f358d4ad5f1b250a26df964ed8d7f93210e9906ddf40161c464a9f44}
 scoring_timeout_seconds: 60
 coverage_refresh_interval: weekly
