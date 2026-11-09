@@ -189,7 +189,14 @@ second_check:
   # Needed to make that amendment work, found in the 3.6/3.7 runs (same disclosure): for anchors before 28 Feb 2019 the
   # project's build backend is dated 28 Feb 2019 (uv needs setuptools >= 40.8 to build a setup.py project; later
   # setuptools cannot build 2017-era setup.py files), with the environment's own setuptools re-installed dated;
-  # Python 3.6 environments are byte-compiled with compileall (uv's compiler needs 3.7). A bug fix under the existing
+  # Python 3.6 environments are byte-compiled with compileall (uv's compiler needs 3.7); and on Python 3.6 the
+  # project is linked editable as `setup.py develop` did (installed package directory removed, metadata kept, a .pth
+  # file pointing at the working tree), because no setuptools that runs on 3.6 can build a PEP 660 editable install
+  # (found in run 42614434626, where all 19 Python 3.6 candidates failed on it); and a sibling archive whose setup.cfg
+  # stamps a dev tag and the BUILD's date on its version ([egg_info] tag_build/tag_date: itsdangerous 2017-2018 gives
+  # "1.0-dev-20261109", which pip of the time accepted and uv rejects) is installed from its own commit with only
+  # those two options removed, so the code is identical and only the version label changes (found in the local
+  # python:3.6 run the same day, 13 build failures). A bug fix under the existing
   # measurement_tools rule, not an amendment: coverage.py is upgraded to the newest version supporting the anchor's
   # Python even when the dated test requirements already brought an older one.
   measurement_tools (detail): >-

@@ -2,7 +2,7 @@
 import pytest
 
 from riskrank.replay_second import (added_tests, apfd, apfdc, backport_source, must_precede, ordering_result,
-                                    python_for, run_status)
+                                    python_for, run_status, strip_dev_tag)
 
 
 def test_section_3_10_3_worked_examples():
@@ -95,3 +95,10 @@ def test_combine_prefers_a_real_outcome_over_a_build_failure(tmp_path, monkeypat
     out = json.load(open(tmp_path / "out" / "second_check.json"))
     assert out["excluded"]["build_failure"] == 0 and out["excluded"]["backport_passes_all_three"] == 1
     assert out["reproduced"] == 0 and out["reporting"].startswith("fewer than 12")
+
+
+def test_only_the_egg_info_dev_tag_is_removed_from_a_sibling_setup_cfg():
+    cfg = "[egg_info]\ntag_build = 'dev'\ntag_date = 1\n\n[aliases]\nrelease = egg_info -RDb ''\n\n[x]\ntag_build = keep\n"
+    out, dropped = strip_dev_tag(cfg)
+    assert dropped and out == "[egg_info]\n\n[aliases]\nrelease = egg_info -RDb ''\n\n[x]\ntag_build = keep\n"
+    assert strip_dev_tag("[metadata]\nlicense_file = LICENSE\n") == ("[metadata]\nlicense_file = LICENSE\n", False)

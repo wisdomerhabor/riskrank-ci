@@ -236,6 +236,71 @@ def has_group(pyproject: str, name: str) -> bool:
         return False
 
 
+def sibling_source(repo: str, sha: str) -> str:
+    """What uv installs for a pinned sibling archive: the git URL, unless that commit's setup.cfg stamps a dev tag on
+    the version ([egg_info] tag_build/tag_date). Those tags made versions such as "1.0-dev-20261109" (itsdangerous,
+    2017-2018: tag_build = 'dev' in quotes, tag_date = the BUILD's date, not the anchor's). pip of the time accepted
+    them as legacy versions; uv rejects them. Then the commit is checked out locally with only those two options removed
+    from setup.cfg, so the installed code is identical and only the version label loses its tag (fourth amendment,
+    9 Nov 2026)."""
+    url = f"git+https://github.com/{repo}@{sha}"
+    d = os.path.join(WORK, "siblings", f"{repo.replace('/', '-')}-{sha[:10]}")
+    if not os.path.isdir(d):
+        tmp = d + ".tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        for cmd in (["git", "init", "-q", tmp], ["git", "-C", tmp, "fetch", "-q", "--depth", "1",
+                    f"https://github.com/{repo}", sha], ["git", "-C", tmp, "checkout", "-q", "FETCH_HEAD"]):
+            r = sh(cmd)
+            if r.returncode:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return url  # cannot inspect it: uv installs it as before, and any version error is a build failure
+        os.replace(tmp, d)
+    cfg = os.path.join(d, "setup.cfg")
+    sh(["git", "-C", d, "checkout", "-q", "--", "."])  # back to the commit's own files before deciding (reruns)
+    if not os.path.exists(cfg):
+        return url
+    text, dropped = strip_dev_tag(open(cfg).read())
+    if not dropped:
+        return url
+    open(cfg, "w").write(text)
+    return d
+
+
+def strip_dev_tag(cfg: str) -> tuple[str, bool]:
+    """setup.cfg text without [egg_info] tag_build and tag_date; whether anything was removed."""
+    out, section, dropped = [], "", False
+    for ln in cfg.splitlines(keepends=True):
+        s = ln.strip()
+        if s.startswith("[") and s.endswith("]"):
+            section = s[1:-1].strip()
+        elif section == "egg_info" and re.match(r"(tag_build|tag_date)\s*[=:]", s):
+            dropped = True
+            continue
+        out.append(ln)
+    return "".join(out), dropped
+
+
+def develop_link(wt: str, vpy: str) -> tuple[bool, str]:
+    """The editable install as `setup.py develop` made it before PEP 660: the project's installed package directory
+    is removed (its metadata stays, so entry points and version lookups still resolve) and a .pth file puts the
+    working tree's source directory on sys.path, so the tests import and measure the checked-out code. Used on
+    Python 3.6 only, where setuptools 64+ (the first with build_editable) cannot run (third amendment, 9 Nov 2026)."""
+    site = sh([vpy, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"]).stdout.strip()
+    src = os.path.join(wt, "src") if os.path.isdir(os.path.join(wt, "src", PROJECT)) else wt
+    if not os.path.isdir(os.path.join(src, PROJECT)) or not os.path.isdir(site):
+        return False, f"no {PROJECT} package under {src} or no site-packages ({site!r})"
+    installed = os.path.join(site, PROJECT)
+    if os.path.isdir(installed):
+        shutil.rmtree(installed)
+    with open(os.path.join(site, f"__editable__.{PROJECT}.pth"), "w") as fh:
+        fh.write(os.path.realpath(src) + "\n")
+    r = sh([vpy, "-c", f"import {PROJECT}, os; print(os.path.realpath({PROJECT}.__file__))"], cwd="/")
+    where = r.stdout.strip()
+    if r.returncode or not where.startswith(os.path.realpath(src)):
+        return False, f"{PROJECT} imports from {where or r.stderr.strip()[-300:]}, not {src}"
+    return True, ""
+
+
 def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
     py = python_for(date)
     r = sh(["uv", "venv", "-q", "--python", py, venv])
@@ -259,9 +324,11 @@ def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
     # pytest setting would otherwise fail on deprecation warnings (blinker 1.4's escape sequences, 2021 anchors).
     # Branch archives that tox.ini installed (the project's sibling libraries in development) are pinned to their
     # last commit at the anchor's date; setuptools is installed dated, as every virtualenv of the time had it.
-    pinned = [f"git+https://github.com/{r}@{sha_at(r, br, date)}" for r, br in tox_archives(os.path.join(wt, "tox.ini"))]
+    shas = [(r, sha_at(r, br, date)) for r, br in tox_archives(os.path.join(wt, "tox.ini"))]
+    pinned = [sibling_source(r, s) for r, s in shas]
     if pinned:
-        source += " + " + ", ".join(p.split("/")[-1] for p in pinned)
+        source += " + " + ", ".join(f"{r.split('/')[-1]}@{s}" + ("" if p.startswith("git+") else " (dev tag removed)")
+                                    for (r, s), p in zip(shas, pinned))
     # uv builds a project that has no pyproject.toml with setuptools 40.8 or later (5 Feb 2019), so for an older
     # anchor the build backend is dated 28 Feb 2019 instead: still old enough for 2017-era setup.py files (MarkupSafe
     # 1.0 imports setuptools.Feature, removed in Jan 2020). For an anchor after that date this is the anchor's own
@@ -277,11 +344,16 @@ def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
             "--reinstall-package", "setuptools", "setuptools"], cwd=wt)
     if r.returncode:
         return False, f"dated setuptools: {r.stderr.strip()[-400:]}"
-    newer = [f"--exclude-newer-package={p}={BUILD_TOOLS_DATE}" for p in ("setuptools", "wheel")]  # editable step
-    r = sh(["uv", "pip", "install", "-q", *compile_flag, "--python", vpy, "--exclude-newer", date, *newer, "--no-deps",
-            "--reinstall-package", PROJECT, "-e", "."], cwd=wt)
-    if r.returncode:
-        return False, f"editable install: {r.stderr.strip()[-400:]}"
+    if py == "3.6":
+        ok, msg = develop_link(wt, vpy)  # no setuptools that runs on 3.6 can build a PEP 660 editable install
+        if not ok:
+            return False, f"editable install: {msg}"
+    else:
+        newer = [f"--exclude-newer-package={p}={BUILD_TOOLS_DATE}" for p in ("setuptools", "wheel")]  # editable step
+        r = sh(["uv", "pip", "install", "-q", *compile_flag, "--python", vpy, "--exclude-newer", date, *newer,
+                "--no-deps", "--reinstall-package", PROJECT, "-e", "."], cwd=wt)
+        if r.returncode:
+            return False, f"editable install: {r.stderr.strip()[-400:]}"
     if not compile_flag:
         site = sh([vpy, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"]).stdout.strip()
         sh([vpy, "-m", "compileall", "-q", site])
