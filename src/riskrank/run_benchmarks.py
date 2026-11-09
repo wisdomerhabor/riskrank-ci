@@ -34,6 +34,8 @@ for _v in THREAD_VARS:
 
 import argparse
 import csv
+import glob
+import heapq
 import itertools
 import json
 import math
@@ -232,6 +234,60 @@ def run_pool(fn, items: list, s: dict, jobs: int, sink) -> None:
             sink(f.result())
 
 
+# ------------------------------------------------------------------ sharding (GitHub Actions)
+# The full protocol is too large for one workstation (largest training sets ~250,000 rows), so it can run
+# as N shards on separate machines. Tuning is split into pieces of (task, trials): a task too costly for one
+# shard is split into single trials, which models.combine merges back into exactly what tune() returns.
+# Shard assignment is deterministic (longest piece first onto the least-loaded shard), so every shard
+# computes the same plan from the manifest alone.
+SPLIT_SHARE = 0.25  # a task costing more than this share of one shard's work is split into single trials
+
+
+def _cost(t: dict, s: dict) -> float:
+    n = _size_hint(t, s)
+    return n * math.log2(n + 2)
+
+
+def _assign(items: list, cost, shards: int) -> list[list]:
+    loads = [(0.0, i) for i in range(shards)]
+    out: list[list] = [[] for _ in range(shards)]
+    for it in sorted(items, key=lambda x: (-cost(x), json.dumps(x, sort_keys=True, default=str))):
+        load, i = heapq.heappop(loads)
+        out[i].append(it)
+        heapq.heappush(loads, (load + cost(it), i))
+    return out
+
+
+def pieces(s: dict, shards: int) -> list[list[dict]]:
+    pairs = [(imb, i) for imb in models.IMBALANCES for i in range(s["trials"])]
+    tasks = all_tasks(s)
+    total = sum(_cost(t, s) for t in tasks) * len(pairs)
+    cap = SPLIT_SHARE * total / shards
+    items = []
+    for t in tasks:
+        c = _cost(t, s)
+        groups = [[p] for p in pairs] if c * len(pairs) > cap else [pairs]
+        items += [{"key": key(t), "task": t, "pairs": g, "cost": c * len(g)} for g in groups]
+    return _assign(items, lambda x: x["cost"], shards)
+
+
+def score_shards(recs: list[dict], s: dict, shards: int) -> list[list[dict]]:
+    return _assign(recs, lambda r: _cost(r, s), shards)
+
+
+def piece_task(pc: dict, s: dict) -> dict:
+    t0 = time.monotonic()
+    t = pc["task"]
+    base, calib, _tests, feats = split(t, s)  # the test frames are not touched in this phase
+    pairs = [tuple(p) for p in pc["pairs"]]
+    try:
+        recs = models.run_trials(base, feats, t["family"], s["seed"], s["trials"], "stratified", pairs)
+    except ValueError as e:  # no usable folds: every trial fails, so the merged task records the error
+        recs = [{"imbalance": imb, "trial": i, "error": str(e)} for imb, i in pairs]
+    return {"key": pc["key"], "records": recs, "n_base": len(base), "n_calib": len(calib),
+            "defects_base": int(base["label"].sum()), "wall_seconds": round(time.monotonic() - t0, 2)}
+
+
 # ------------------------------------------------------------------ files
 def _read_jsonl(path: str) -> list[dict]:
     if not os.path.exists(path):
@@ -282,12 +338,93 @@ def phase_tune(out: str, s: dict, jobs: int) -> None:
     run_pool(tune_task, todo, s, jobs, sink)
 
 
+def _shard(spec: str | None) -> tuple[int, int] | None:
+    if not spec:
+        return None
+    i, n = (int(x) for x in spec.split("/"))
+    if not 0 <= i < n:
+        raise SystemExit(f"--shard {spec}: need 0 <= i < N")
+    return i, n
+
+
+def phase_tune_units(out: str, s: dict, jobs: int, shard: tuple[int, int]) -> None:
+    i, n = shard
+    path = os.path.join(out, f"trials-{i:03d}.jsonl")
+    done = {(r["key"], x["imbalance"], x["trial"]) for f in sorted(glob.glob(os.path.join(out, "trials-*.jsonl")))
+            for r in _read_jsonl(f) for x in r["records"]}
+    todo = []
+    for pc in pieces(s, n)[i]:
+        left = [p for p in pc["pairs"] if (pc["key"], *p) not in done]
+        if left:
+            todo.append(pc | {"pairs": left})
+    tick = _progress(f"tune shard {i}/{n}", len(todo))
+
+    def sink(r):
+        _append(path, [r])
+        errs = sum("error" in x for x in r["records"])
+        tick(f"{r['key']} {len(r['records'])} trials{f' ({errs} failed)' if errs else ''} {r['wall_seconds']}s")
+    run_pool(piece_task, todo, s, jobs, sink)
+
+
+def phase_tune_merge(out: str, s: dict) -> None:
+    got: dict = defaultdict(lambda: {"records": {}, "wall_seconds": 0.0})
+    for f in sorted(glob.glob(os.path.join(out, "trials-*.jsonl"))):
+        for r in _read_jsonl(f):
+            g = got[r["key"]]
+            g.update({k: r[k] for k in ("n_base", "n_calib", "defects_base")})
+            g["wall_seconds"] += r["wall_seconds"]
+            for x in r["records"]:
+                g["records"].setdefault((x["imbalance"], x["trial"]), x)
+    need = 2 * s["trials"]
+    tasks = all_tasks(s)
+    short = [key(t) for t in tasks if len(got[key(t)]["records"]) < need]
+    if short:
+        raise SystemExit(f"tuning unfinished: {len(short)} tasks have missing trials; run the tune-units shards again")
+    rows = []
+    for t in tasks:
+        g = got[key(t)]
+        rec = {"key": key(t), **t, "n_base": g["n_base"], "n_calib": g["n_calib"], "defects_base": g["defects_base"]}
+        try:
+            tuned = models.combine(list(g["records"].values()), t["family"], s["seed"], s["trials"], "stratified")
+        except ValueError as e:
+            rows.append(rec | {"error": str(e)})
+            continue
+        rows.append(rec | {"imbalance": tuned.imbalance, "params": tuned.params, "cv_aucpr": tuned.cv_aucpr,
+                           "cv_recall_lines": tuned.cv_recall_lines, "trials": tuned.trials,
+                           "weight_vs_smote": tuned.weight_vs_smote, "wall_seconds": round(g["wall_seconds"], 2)})
+    path = os.path.join(out, "tuned.jsonl")
+    if os.path.exists(path):
+        os.remove(path)
+    _append(path, rows)
+    print(f"merged {len(rows)} tasks ({sum('error' in r for r in rows)} tuning errors) -> {path}", flush=True)
+
+
+def phase_score_merge(out: str, inputs: list[str]) -> None:
+    dirs = sorted(d for pat in inputs for d in glob.glob(pat))
+    rows = [r for d in dirs for r in _read_jsonl(os.path.join(d, "scores.jsonl"))]
+    seen, uniq = set(), []
+    for r in rows:
+        k = (r["key"], r["test"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(r)
+    path, ppath = os.path.join(out, "scores.jsonl"), os.path.join(out, "predictions.csv")
+    for f in (path, ppath):
+        if os.path.exists(f):
+            os.remove(f)
+    _append(path, uniq)
+    frames = [pd.read_csv(os.path.join(d, "predictions.csv")) for d in dirs
+              if os.path.exists(os.path.join(d, "predictions.csv"))]
+    pd.concat(frames).drop_duplicates(["key", "test", "id"]).to_csv(ppath, index=False)
+    print(f"merged {len(uniq)} score rows from {len(dirs)} shard folders -> {path}", flush=True)
+
+
 def _expected(s: dict) -> set[str]:
     return {key(t) for t in all_tasks(s)}
 
 
 def phase_select(out: str, s: dict) -> dict:
-    recs = _read_jsonl(os.path.join(out, "tuned.jsonl"))
+    recs = sorted(_read_jsonl(os.path.join(out, "tuned.jsonl")), key=lambda r: r["key"])  # order-independent means
     missing = _expected(s) - {r["key"] for r in recs}
     if missing:
         raise SystemExit(f"tuning unfinished: {len(missing)} tasks missing; run the tune phase again")
@@ -314,12 +451,14 @@ def phase_select(out: str, s: dict) -> dict:
     return sel
 
 
-def phase_score(out: str, s: dict, jobs: int) -> None:
+def phase_score(out: str, s: dict, jobs: int, shard: tuple[int, int] | None = None) -> None:
     if not os.path.exists(os.path.join(out, "selection.json")):
         raise SystemExit("no selection.json: the select phase must run before any test data is scored")
     tuned = [r for r in _read_jsonl(os.path.join(out, "tuned.jsonl")) if "error" not in r]
     path, ppath = os.path.join(out, "scores.jsonl"), os.path.join(out, "predictions.csv")
     done = {r["key"] for r in _read_jsonl(path)}
+    if shard:
+        tuned = score_shards(tuned, s, shard[1])[shard[0]]
     todo = [r for r in tuned if r["key"] not in done]
     todo.sort(key=lambda r: -_size_hint(r, s))
     if not os.path.exists(ppath):
@@ -352,11 +491,12 @@ def _mean_block(rows: list[dict]) -> dict:
 def phase_report(out: str, s: dict) -> dict:
     sel = json.load(open(os.path.join(out, "selection.json")))
     tuned_ok = {r["key"] for r in _read_jsonl(os.path.join(out, "tuned.jsonl")) if "error" not in r}
-    rows = _read_jsonl(os.path.join(out, "scores.jsonl"))
+    rows = sorted(_read_jsonl(os.path.join(out, "scores.jsonl")), key=lambda r: (r["key"], r["test"]))
     missing = tuned_ok - {r["key"] for r in rows}
     if missing:
         raise SystemExit(f"scoring unfinished: {len(missing)} tasks missing; run the score phase again")
-    preds = pd.read_csv(os.path.join(out, "predictions.csv")).drop_duplicates(["key", "test", "id"])
+    preds = (pd.read_csv(os.path.join(out, "predictions.csv")).drop_duplicates(["key", "test", "id"])
+             .sort_values(["key", "test", "id"], kind="mergesort"))
     rep = {"protocol": CONFIG, "pipeline_check": s["pipeline_check"], "tuning_errors": sel["tuning_errors"]}
     for corpus in s["corpora"]:
         for mode in s["modes"]:
@@ -405,7 +545,10 @@ def _settings(check: bool, corpora: list[str], modes: list[str], families: list[
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=["tune", "select", "score", "report", "all"])
+    ap.add_argument("phase", choices=["init", "tune", "tune-units", "tune-merge", "select", "score", "score-merge",
+                                      "report", "all"])
+    ap.add_argument("--shard", help="i/N: run shard i of N (tune-units, score)")
+    ap.add_argument("--inputs", nargs="+", default=[], help="score-merge: shard folders (glob patterns)")
     ap.add_argument("--out")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--check", action="store_true", help="pipeline check: 1 trial, 1 x 3 folds, two projects per corpus")
@@ -420,7 +563,7 @@ def main(argv: list[str] | None = None) -> None:
     manifest = os.path.join(out, "manifest.json") if out else None
     if manifest and os.path.exists(manifest):
         s = json.load(open(manifest))["settings"]  # a resumed run keeps its own settings
-    elif a.phase in ("tune", "all"):
+    elif a.phase in ("init", "tune", "all"):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out = out or os.path.join("runs", ("bench-check-" if a.check else "bench-") + stamp)
         os.makedirs(out, exist_ok=True)
@@ -437,12 +580,21 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("--out must name an existing benchmark run for this phase")
     print("run:", out, flush=True)
 
+    shard = _shard(a.shard)
+    if a.phase == "tune-units":
+        if not shard:
+            raise SystemExit("tune-units needs --shard i/N")
+        phase_tune_units(out, s, a.jobs, shard)
+    if a.phase == "tune-merge":
+        phase_tune_merge(out, s)
+    if a.phase == "score-merge":
+        phase_score_merge(out, a.inputs)
     if a.phase in ("tune", "all"):
         phase_tune(out, s, a.jobs)
     if a.phase in ("select", "all"):
         phase_select(out, s)
     if a.phase in ("score", "all"):
-        phase_score(out, s, a.jobs)
+        phase_score(out, s, a.jobs, shard)
     if a.phase in ("report", "all"):
         phase_report(out, s)
 

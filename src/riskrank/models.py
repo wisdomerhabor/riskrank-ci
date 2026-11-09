@@ -265,6 +265,78 @@ def tune(base, features, family, seconds: float | None = None, seed: int = 42, *
     )
 
 
+# ---------------------------------------------------------------- tuning split into trials
+# For running one fixed-trial tune across many machines (riskrank.run_benchmarks, GitHub Actions shards).
+# tune(trials=k) draws the same parameter list for each imbalance method from a fresh generator seeded
+# with `seed`, scores every trial on the same folds, keeps the FIRST trial with the highest AUC-PR, and
+# stops the SMOTE search at the first trial SMOTE cannot fit. run_trials scores any subset of the trials;
+# combine applies exactly those rules to the full set of records, so combine(run_trials(all)) == tune.
+IMBALANCES = ("weight", "smote")
+
+
+def trial_params(family: str, seed: int, trials: int) -> list[dict]:
+    rng = np.random.default_rng(seed)
+    return [sample_params(family, rng) for _ in range(trials)]
+
+
+def make_folds(base: pd.DataFrame, kind: str, seed: int) -> list:
+    if kind == "time":
+        folds = time_folds(base)
+    elif kind == "stratified":
+        folds = stratified_folds(base, seed=seed)
+    else:
+        raise ValueError(f"unknown fold kind {kind!r}")
+    if not folds:
+        raise ValueError("no usable time folds in the base data")
+    return folds
+
+
+def run_trials(base, features, family, seed: int, trials: int, kind: str,
+               pairs: list[tuple[str, int]]) -> list[dict]:
+    """Score the given (imbalance, trial index) pairs; a ValueError from a trial is recorded, not raised."""
+    folds = make_folds(base, kind, seed)
+    params = trial_params(family, seed, trials)
+    out = []
+    for imbalance, i in pairs:
+        try:
+            ap, rec = cv_score(family, params[i], imbalance, seed, base, features, folds)
+            out.append({"imbalance": imbalance, "trial": i, "ap": ap, "rec": rec})
+        except ValueError as e:
+            out.append({"imbalance": imbalance, "trial": i, "error": str(e)})
+    return out
+
+
+def combine(records: list[dict], family: str, seed: int, trials: int, kind: str) -> Tuned:
+    """The Tuned that tune(trials=trials, folds=kind) returns, from every trial's record."""
+    params = trial_params(family, seed, trials)
+    by = {(r["imbalance"], int(r["trial"])): r for r in records}
+    best: dict[str, tuple] = {}
+    done: dict[str, int] = {}
+    for imbalance in IMBALANCES:
+        n, top = 0, None
+        for i in range(trials):
+            r = by[(imbalance, i)]  # KeyError: a trial is missing, so the result cannot be formed
+            if "error" in r:
+                if imbalance == "weight":
+                    raise ValueError(r["error"])
+                break
+            n += 1
+            if top is None or r["ap"] > top[1]:
+                top = (params[i], r["ap"], r["rec"])
+        done[imbalance] = n
+        if top is not None:
+            best[imbalance] = top
+    w = best["weight"]
+    s = best.get("smote")
+    use_smote = s is not None and s[2] > w[2]
+    chosen, pick = ("smote", s) if use_smote else ("weight", w)
+    return Tuned(
+        family=family, imbalance=chosen, params=pick[0], cv_aucpr=pick[1], cv_recall_lines=pick[2], trials=done,
+        weight_vs_smote={k: {"cv_aucpr": round(v[1], 4), "cv_recall_lines": round(v[2], 4)} for k, v in best.items()},
+        budget={"trials": trials}, folds=kind,
+    )
+
+
 # ---------------------------------------------------------------- calibration
 @dataclass
 class Calibrator:

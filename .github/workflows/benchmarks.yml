@@ -1,0 +1,153 @@
+# The NASA MDP and PROMISE benchmarks under the pre-registered protocol (config/benchmarks.yaml),
+# sharded across GitHub-hosted runners because the full run is too large for one workstation.
+#   plan  -> fetch the corpora (checksums verified) and write the run manifest (settings, versions, commit)
+#   tune  -> N shards of tuning trials; each shard uploads what it finished, even when it times out
+#   merge -> combine the trials into tuned.jsonl (identical to an unsharded run) and select the family
+#   score -> N shards refit and score;  report -> merge the scores and write report.json
+# A run whose tuning shards did not all finish is resumed by dispatching again with resume_run set to
+# its run id: finished trials are reused and only the rest are run.
+name: benchmarks
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: number of tuning and scoring shards
+        default: "96"
+      resume_run:
+        description: id of an earlier benchmarks run whose manifest and finished trials to reuse (optional)
+        default: ""
+permissions:
+  contents: read
+  actions: read
+env:
+  PIN: scipy==1.18.1 threadpoolctl==3.8.0 joblib==1.6.0   # beside requirements.txt: the workstation's versions
+  JOBS: "3"                                              # workers per runner (memory: deep forests on 250k rows)
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.m.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - run: python -m riskrank.benchmarks fetch
+      - name: Manifest (new, or the resumed run's)
+        run: |
+          if [ -n "${{ inputs.resume_run }}" ]; then
+            gh run download "${{ inputs.resume_run }}" -R "$GITHUB_REPOSITORY" -n bench-manifest -D run
+          else
+            python -m riskrank.run_benchmarks init --out run
+          fi
+          cat run/manifest.json
+      - id: m
+        run: echo "shards=$(python -c 'import json;print(json.dumps(list(range(${{ inputs.shards }}))))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with: {name: bench-data, path: "data/raw/nasa_mdp\ndata/raw/promise\ndata/raw/benchmarks_manifest.json"}
+      - uses: actions/upload-artifact@v4
+        with: {name: bench-manifest, path: run/manifest.json}
+
+  tune:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - uses: actions/download-artifact@v4
+        with: {name: bench-data, path: data/raw}
+      - uses: actions/download-artifact@v4
+        with: {name: bench-manifest, path: run}
+      - name: Finished trials from the resumed run
+        if: inputs.resume_run != ''
+        run: |
+          gh run download "${{ inputs.resume_run }}" -R "$GITHUB_REPOSITORY" -n bench-trials -D prev
+          for f in prev/*.jsonl; do cp "$f" "run/trials-prev-$(basename "$f")"; done
+      - name: Tune this shard (stops cleanly before the job limit)
+        run: |
+          own=trials-$(printf %03d ${{ matrix.shard }}).jsonl
+          timeout --signal=INT 340m python -m riskrank.run_benchmarks tune-units --out run \
+            --shard ${{ matrix.shard }}/${{ inputs.shards }} --jobs $JOBS || echo "stopped early (exit $?)"
+          mkdir -p up && touch "run/$own" && cp "run/$own" up/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trials-${{ matrix.shard }}
+          path: up/
+
+  merge:
+    needs: [plan, tune]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - uses: actions/download-artifact@v4
+        with: {name: bench-data, path: data/raw}
+      - uses: actions/download-artifact@v4
+        with: {name: bench-manifest, path: run}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "trials-*", path: run, merge-multiple: true}
+      - name: Finished trials from the resumed run
+        if: inputs.resume_run != ''
+        run: |
+          gh run download "${{ inputs.resume_run }}" -R "$GITHUB_REPOSITORY" -n bench-trials -D prev
+          for f in prev/*.jsonl; do cp "$f" "run/trials-prev-$(basename "$f")"; done
+      - name: Every finished trial so far, for a later resume
+        run: mkdir -p all && cp run/trials-*.jsonl all/ && ls all | wc -l
+      - uses: actions/upload-artifact@v4
+        with: {name: bench-trials, path: all/}
+      - run: python -m riskrank.run_benchmarks tune-merge --out run
+      - run: python -m riskrank.run_benchmarks select --out run
+      - uses: actions/upload-artifact@v4
+        with: {name: bench-tuned, path: "run/manifest.json\nrun/tuned.jsonl\nrun/selection.json"}
+
+  score:
+    needs: [plan, merge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - uses: actions/download-artifact@v4
+        with: {name: bench-data, path: data/raw}
+      - uses: actions/download-artifact@v4
+        with: {name: bench-tuned, path: run}
+      - run: python -m riskrank.run_benchmarks score --out run --shard ${{ matrix.shard }}/${{ inputs.shards }} --jobs $JOBS
+      - uses: actions/upload-artifact@v4
+        with: {name: "score-${{ matrix.shard }}", path: "run/scores.jsonl\nrun/predictions.csv"}
+
+  report:
+    needs: score
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - uses: actions/download-artifact@v4
+        with: {name: bench-data, path: data/raw}
+      - uses: actions/download-artifact@v4
+        with: {name: bench-tuned, path: run}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "score-*", path: shards}
+      - run: python -m riskrank.run_benchmarks score-merge --out run --inputs 'shards/score-*'
+      - run: python -m riskrank.run_benchmarks report --out run
+      - uses: actions/upload-artifact@v4
+        with: {name: bench-run, path: run, retention-days: 90}

@@ -108,3 +108,31 @@ def test_time_folds_skip_a_fold_with_one_defect_to_train_on():
         assert base["label"].iloc[tr].sum() >= 2
     tuned = tune(base, FEATS, "mlp", trials=1, seed=1)
     assert tuned.trials["weight"] == 1
+
+
+@pytest.mark.parametrize("family", ["lr", "rf", "lgbm", "mlp"])
+def test_trials_run_apart_and_combined_equal_tune(family, monkeypatch):
+    # The benchmark shards run trials on different machines and in any order; the merged result must be
+    # exactly what one tune() call returns.
+    monkeypatch.setattr(models, "N_JOBS", 1)
+    base = synthetic_commits(300)
+    want = tune(base, FEATS, family, seed=7, trials=4, folds="stratified")
+    pairs = [(imb, i) for imb in models.IMBALANCES for i in range(4)]
+    recs = []
+    for chunk in (pairs[5:], pairs[:2], pairs[2:5]):  # three "shards", out of order
+        recs += models.run_trials(base, FEATS, family, 7, 4, "stratified", chunk)
+    got = models.combine(list(reversed(recs)), family, 7, 4, "stratified")
+    assert got == want
+
+
+def test_combine_stops_smote_at_its_first_failure_and_needs_every_trial():
+    recs = [{"imbalance": "weight", "trial": i, "ap": 0.1 * i, "rec": 0.0} for i in range(3)]
+    recs += [{"imbalance": "smote", "trial": 0, "ap": 0.9, "rec": 0.9},
+             {"imbalance": "smote", "trial": 1, "error": "too few"},
+             {"imbalance": "smote", "trial": 2, "ap": 0.99, "rec": 0.99}]  # after the failure: ignored
+    t = models.combine(recs, "lr", 0, 3, "stratified")
+    assert t.trials == {"weight": 3, "smote": 1} and t.imbalance == "smote" and t.cv_aucpr == 0.9
+    with pytest.raises(KeyError):
+        models.combine(recs[1:], "lr", 0, 3, "stratified")
+    with pytest.raises(ValueError):
+        models.combine([{"imbalance": "weight", "trial": 0, "error": "x"}] + recs[1:], "lr", 0, 3, "stratified")
