@@ -12,4 +12,4 @@ ENV RISKRANK_DB=sqlite:////data/riskrank.db RISKRANK_AUTH=/run/secrets/dashboard
     RISKRANK_GH_TOKEN_FILE=/run/secrets/ingest_token
 EXPOSE 8501
 CMD ["streamlit", "run", "src/riskrank/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501", \
-     "--server.headless", "true", "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal"]
+     "--server.headless", "true", "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal", "--theme.primaryColor", "#1f3a5f"]

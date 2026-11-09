@@ -166,17 +166,31 @@ def main() -> None:
     # ---------------------------------------------------------------- settings bar
     stored = {"ranking_key": run["ranking_key"], "budget_unit": run["budget_unit"],
               "budget": float(run["budget"] or 20), "risk_threshold": float(run["risk_threshold"] or 0.5)}
-    c = st.columns([1.2, 1.4, 1.2, 1.2, 1.2])
-    granularity = c[0].selectbox("Granularity", ["modules", "commits"], key="granularity")
+    # two rows, so no value is cut off on a narrow window (walkthrough S-6)
+    row1, row2 = st.columns(3), st.columns(3)
+    granularity = row1[0].selectbox("Granularity", ["modules", "commits"], key="granularity",
+                                    help="Modules: this build's ranked modules and test plan. Commits: stored "
+                                         "historical commit scores.")
     commit_view = granularity == "commits"
     keys = {"calibrated risk": "default", "effort-normalised": "effort"}
     units = {"modules (artefacts)": "artefacts", "lines of code": "lines"}
-    key = keys[c[1].selectbox("Ranking key", list(keys), index=list(keys.values()).index(stored["ranking_key"]),
-                              disabled=commit_view)]
-    unit = units[c[2].selectbox("Budget unit", list(units), index=list(units.values()).index(stored["budget_unit"]),
-                                disabled=commit_view)]
-    budget = c[3].number_input("Budget value (%)", 1.0, 100.0, stored["budget"], 1.0, disabled=commit_view)
-    threshold = c[4].number_input("Risk threshold", 0.0, 1.0, stored["risk_threshold"], 0.05)
+    key = keys[row1[1].selectbox(
+        "Ranking key", list(keys), index=list(keys.values()).index(stored["ranking_key"]), disabled=commit_view,
+        help=f"Calibrated risk: highest probability of a defect first. Effort-normalised: lower-bounded risk "
+             f"({1 - Z:.2f} × risk + {Z:.2f}) per line of code, so small risky modules come first. Affects the "
+             "ranked table only.")]                                                                      # S-2, S-4
+    unit = units[row1[2].selectbox(
+        "Budget unit", list(units), index=list(units.values()).index(stored["budget_unit"]), disabled=commit_view,
+        help="Modules (artefacts): the budget is a share of the changed modules. Lines of code: a share of their "
+             "lines. Affects which rows are in budget.")]                                               # S-2, S-4
+    of_what = "of changed lines" if unit == "lines" else "of changed modules"
+    budget = row2[0].number_input(f"Budget (% {of_what})", 1.0, 100.0, stored["budget"], 1.0, format="%.0f",
+                                  disabled=commit_view, help="Any whole value from 1 to 100. Affects which rows "
+                                                             "are in budget.")                         # S-2, S-7
+    threshold = row2[1].number_input("Risk threshold", 0.0, 1.0, stored["risk_threshold"], 0.05, format="%.2f",
+                                     help="Changes the flagged column in the ranked table and the commit view. The "
+                                          "header's escalation is the pipeline's decision and does not change.")  # S-2
+    row2[0].caption("Valid range 1–100. An invalid entry is not applied.")                                # S-3
     preview = (key, unit, budget, threshold) != (stored["ranking_key"], stored["budget_unit"], stored["budget"],
                                                  stored["risk_threshold"])
     if commit_view:
@@ -184,6 +198,8 @@ def main() -> None:
     elif preview:
         st.info("**Preview**: the ranking below uses these settings on the stored scores. The pipeline still uses "
                 "the repository's settings file; edit `riskrank.yml` to apply them.")
+    else:
+        st.caption("These settings match `riskrank.yml` as recorded for this build.")                     # S-1
 
     # ---------------------------------------------------------------- ranked plan + explanation
     left, right = st.columns([3, 2])
@@ -237,6 +253,17 @@ def main() -> None:
                         + (f" · realised share {share:.1%}" if share is not None else "")
                         + (" (the module at the boundary is included whole, so the share can exceed the budget)"
                            if share is not None and unit == "lines" and share > budget / 100 + 1e-9 else ""))
+            if len(r):
+                n_flag = int(r["flagged"].sum())
+                st.caption(f"{n_flag} of {len(r)} modules above the {threshold:.2f} threshold.")          # S-5
+                if preview:
+                    base = rank(ranking.rename(columns={"module": "id"}), stored["ranking_key"])
+                    was = set(base.loc[mark(base, stored["budget_unit"], stored["budget"] / 100,
+                                            stored["ranking_key"]).to_numpy().astype(bool), "id"])
+                    now = set(r.loc[r["in_budget"].astype(bool), "id"])
+                    st.caption("Compared with this build's settings: "                                  # S-9
+                               + ("no change to the in-budget selection." if was == now else
+                                  f"{len(now - was)} module(s) added to and {len(was - now)} removed from the budget."))
             sel = None
             if len(r):
                 unmapped = set(((run.get("detail") or {}).get("stats") or {}).get("ranked_modules_missing_from_map", []))

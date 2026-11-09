@@ -1,3 +1,7 @@
 [client]
 # Hide the Deploy button and developer menu from end users (walkthrough HD-11)
 toolbarMode = "minimal"
+
+[theme]
+# Focus uses the dashboard navy, so red is left for errors only (walkthrough S-8)
+primaryColor = "#1f3a5f"

@@ -78,3 +78,22 @@ def test_build_choice_is_restored_from_the_address(env):
     at = sign_in(at.run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     assert next(b for b in at.selectbox if b.label == "Build").value.startswith("2026-11-08")
+
+
+def test_settings_bar_low_severity_fixes(env):
+    """Walkthrough settings-bar findings S-1 to S-9 (severity 1 and 2)."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    t = text(at)
+    assert "match `riskrank.yml` as recorded for this build" in t                                      # S-1
+    labels = {n.label: n for n in at.number_input}
+    budget = next(n for lbl, n in labels.items() if lbl.startswith("Budget (%"))
+    assert budget.label in ("Budget (% of changed modules)", "Budget (% of changed lines)")            # S-7
+    assert all(n.help for n in at.number_input) and all(b.help for b in at.selectbox[2:5])             # S-2, S-4
+    assert "Valid range 1–100" in t                                                                    # S-3
+    assert "modules above the 0.50 threshold" in t                                                     # S-5
+    labels["Risk threshold"].set_value(0.05)
+    at = at.run()
+    t = text(at)
+    assert "Preview" in " ".join(i.value for i in at.info)
+    assert "no change to the in-budget selection" in t                                                 # S-9
