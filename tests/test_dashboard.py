@@ -180,3 +180,13 @@ def test_offline_panels_low_severity_fixes(env, monkeypatch):
     assert "numbers = modules in each bin" in t
     assert "Click a legend entry to isolate its curve" in t                                            # O-4
     assert "the selected build is the larger dark point" in t                                          # O-7
+
+
+def test_layout_low_severity_fixes(env):
+    """Walkthrough layout findings L-1 to L-5: status tiles above three labelled tabs of bordered cards."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    assert [m.label for m in at.metric] == ["Build escalated", "Pipeline status", "Coverage map age", "Pushed commit"]
+    assert at.metric[0].value == "yes" and at.metric[2].value == "4 commits"                              # L-4
+    assert [x.label for x in at.tabs] == ["This build: ranked changes", "Test plan the pipeline ran",
+                                          "Offline model evaluation"]                                        # L-2, L-3
