@@ -71,3 +71,24 @@ def test_random_baseline_lines_close_to_budget_for_equal_sizes():
 def test_no_defects_gives_undefined_recall():
     f = artefacts([("a", 0.5, 0.5, 10, False)])
     assert pd.isna(recall_artefacts(rank(f, "default")))
+
+
+def test_5000_artefacts_ranked_and_marked_within_target_on_a_workstation():
+    """Table 3.10 ranking time: up to 5,000 artefacts within 60 seconds offline (fixture, not evidence)."""
+    import time
+
+    import numpy as np
+
+    from riskrank.budget import mark
+
+    rng = np.random.default_rng(0)
+    n = 5000
+    frame = pd.DataFrame({"id": [f"m{i:05d}" for i in range(n)], "p": rng.random(n), "raw": rng.normal(size=n),
+                          "size": rng.integers(0, 2000, n), "label": rng.random(n) < 0.1})
+    t0 = time.perf_counter()
+    for key in ("default", "effort"):
+        r = rank(frame, key)
+        for unit in ("artefacts", "lines"):
+            mark(r, unit, 0.2, key)
+            (recall_artefacts if unit == "artefacts" else recall_lines)(r)
+    assert time.perf_counter() - t0 < 60
