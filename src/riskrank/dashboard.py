@@ -254,7 +254,8 @@ def main() -> None:
             f"{trailing.get('zero_size_only', 0)} excluded for zero size")
 
     # ---------------------------------------------------------------- evaluation panels
-    e1, e2, e3 = st.columns(3)
+    e1 = st.container()  # the cost-effectiveness curve on its own full-width row (walkthrough finding)
+    e2, e3 = st.columns(2)
     off = db.latest_offline(module_model)
     with e1:
         st.markdown("#### Cost-effectiveness (offline, lines-of-code budget)")
