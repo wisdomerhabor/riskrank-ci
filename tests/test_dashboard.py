@@ -111,8 +111,9 @@ def test_ranked_plan_low_severity_fixes(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     table = at.dataframe[0].value
-    assert set(table["in budget"]) <= {"✓ in budget", "–"} and set(table["flagged"]) <= {"⚑ above threshold", "–"}  # R-5, R-7
-    assert list(table.columns[:4]) == ["#", "risk", "in budget", "flagged"]                              # R-8
+    assert set(table["Budget"]) <= {"In budget", "Outside budget"} and set(table["Flagged"]) <= {"Flagged", "Below threshold"}
+    assert set(table["Tests mapped"]) <= {"Mapped", "Unmapped"}                                       # feedback 9 Nov  # R-5, R-7
+    assert list(table.columns[:4]) == ["#", "Risk score", "Budget", "Flagged"]                              # R-8
     t = text(at)
     assert "No row selected: the explanation shows rank 1 by default." in t                              # R-6
     assert "Touched 3 modules" in plain(at)
@@ -145,9 +146,9 @@ def test_test_plan_low_severity_fixes(env):
     t = text(at)
     assert "**Ranked tests (2)**" in t and any(e.label.startswith("Unranked tests (1)") for e in at.expander)  # T-4
     tables = [d.value for d in at.dataframe]
-    ranked = next(d for d in tables if "module that sets its rank" in d.columns)
+    ranked = next(d for d in tables if "Module that sets its rank" in d.columns)
     assert "None" not in ranked.astype(str).to_numpy()                                                  # T-5
-    assert list(ranked.columns[:2]) == ["#", "in budget"]                                               # T-6
+    assert list(ranked.columns[:2]) == ["#", "Budget"]                                               # T-6
     assert "Unranked tests 1 of the 3" in plain(at) and "excluded for zero size" not in t                  # T-4, T-10
 
 
@@ -161,8 +162,9 @@ def test_commit_view_low_severity_fixes(env):
     t = text(at)
     assert "Risk 0.6000" in plain(at)                                                                      # C-5
     assert "Showing the top" in t and "five largest per commit" in t                                   # C-9
-    table = next(d.value for d in at.dataframe if "commit" in d.value.columns)
-    assert table["scored in build at"].str.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d$").all()                 # C-6
+    table = next(d.value for d in at.dataframe if "Commit" in d.value.columns)
+    assert set(table["Flagged"]) <= {"Flagged", "Below threshold"}
+    assert table["Scored in build at"].str.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d$").all()                 # C-6
     next(n for n in at.number_input if n.label == "Risk threshold").set_value(0.2)
     at = at.run()
     assert "the flagged column uses threshold 0.20" in " ".join(i.value for i in at.info)              # C-4

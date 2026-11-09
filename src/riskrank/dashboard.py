@@ -132,6 +132,29 @@ def escalation_facts(run: dict, commits: pd.DataFrame) -> tuple[tuple[str, str],
         ("Counts", "only commits whose features lie inside the model's training range")]
 
 
+# one status vocabulary for every table (feedback 9 Nov): budget and risk stay separate signals, and a module
+# below the threshold is "below threshold", not "safe", so it gets no green
+STATUS_CSS = {
+    "In budget": "background-color: #e0f2e6; color: #1e6b3a; font-weight: 600",
+    "Flagged": "background-color: #fdecd2; color: #8a4b00; font-weight: 600",
+    "Unmapped": "background-color: #fdecd2; color: #8a4b00",
+    "Outside training range": "background-color: #fdecd2; color: #8a4b00",
+    "Mapped": "color: #1e6b3a",
+    "Outside budget": "color: #6b7280", "Below threshold": "color: #6b7280", "Inside training range": "color: #6b7280",
+}
+
+
+def status_css(v) -> str:
+    return STATUS_CSS.get(v, "")
+
+
+def risk_column(digits: int = 2) -> st.column_config.ProgressColumn:
+    """The calibrated risk as a number with a bar on the fixed 0–1 scale (bars compare across builds)."""
+    return st.column_config.ProgressColumn("Risk score", format=f"%.{digits}f", min_value=0.0, max_value=1.0,
+                                           width="medium", help="Calibrated probability that the module or commit is "
+                                                                "defect-prone, on a 0–1 scale")
+
+
 def build_label(r) -> str:
     """A build option with its status, so an escalated or degraded build is found without opening each
     one (walkthrough HD-5)."""
@@ -164,7 +187,7 @@ def reason_chart(codes: list[dict], domain: list[float] | None = None) -> alt.Ch
     d["full name"] = d["feature"].map(lambda f: FEATURE_LABELS.get(f, (f, f))[1])
     d["feature"] = d["feature"].map(lambda f: FEATURE_LABELS.get(f, (f, f))[0])
     d["effect"] = d["direction"].map({"raised": "raises risk", "lowered": "lowers risk"})
-    x = alt.X("contribution:Q", title="contribution to the uncalibrated score",
+    x = alt.X("contribution:Q", title="contribution to the uncalibrated score", axis=alt.Axis(tickCount=8),
               scale=alt.Scale(domain=domain) if domain else alt.Undefined)
     return alt.Chart(d).mark_bar().encode(
         x=x, y=alt.Y("feature:N", sort=None, title=None, axis=alt.Axis(labelLimit=200, labelOverlap=False)),
@@ -326,7 +349,7 @@ def main() -> None:
                 st.caption("These settings match `riskrank.yml` as recorded for this build.")                     # S-1
 
             # ---------------------------------------------------------------- ranked plan + explanation
-            left, right = st.columns([3, 2])
+            left, right = st.container(), st.container()  # stacked: the table needs the full width (feedback 9 Nov)
             if commit_view:
                 with left:
                     st.markdown("## Stored commit risk scores (historical, not a live ranking)")
@@ -341,16 +364,21 @@ def main() -> None:
                             st.info("This build scored no commit. Tick the box above to see earlier builds.")
                             sel = None
                         else:
-                            view = shown.assign(commit=shown["commit"].str[:10], risk=shown["p"].map(lambda v: f"{v:.4f}"),
-                                                flagged=shown["p"] > threshold,
-                                                features_outside_training_range=~shown["in_training_range"].astype(bool))
+                            view = shown.assign(
+                                commit=shown["commit"].str[:10], risk=shown["p"],
+                                flagged=["Flagged" if v > threshold else "Below threshold" for v in shown["p"]],
+                                features_outside_training_range=["Inside training range" if i else "Outside training range"
+                                                                 for i in shown["in_training_range"].astype(bool)])
                             view["created"] = pd.to_datetime(view["created"], utc=True).dt.strftime("%Y-%m-%d %H:%M")  # C-6
-                            ev = st.dataframe(view[["commit", "risk", "flagged", "features_outside_training_range", "created",
-                                                    "model_version"]].rename(columns={
-                                                        "created": "scored in build at", "model_version": "model",
-                                                        "features_outside_training_range": "features outside training range"}),
+                            table = view[["commit", "risk", "flagged", "features_outside_training_range", "created",
+                                          "model_version"]].rename(columns={
+                                              "commit": "Commit", "risk": "Risk score", "flagged": "Flagged",
+                                              "created": "Scored in build at", "model_version": "Model",
+                                              "features_outside_training_range": "Features"})
+                            ev = st.dataframe(table.style.map(status_css, subset=["Flagged", "Features"]),
                                               on_select="rerun", selection_mode="single-row", hide_index=True, width="stretch",
-                                              key="commits", column_config={"model": st.column_config.TextColumn(width="medium")})
+                                              key="commits", column_config={"Model": st.column_config.TextColumn(width="medium"),
+                                                                            "Risk score": risk_column(4)})
                             sel = ev.selection.rows[0] if ev.selection.rows else 0
                         st.caption("Two different checks: the model was trained on another corpus (Java, ApacheJIT), and, "
                                    "separately, a commit's features may fall outside the range seen in training. Escalation "
@@ -398,26 +426,26 @@ def main() -> None:
                     sel = None
                     if len(r):
                         unmapped = set(((run.get("detail") or {}).get("stats") or {}).get("ranked_modules_missing_from_map", []))
-                        r["tests mapped"] = ["no tests mapped" if m in unmapped else "yes" for m in r["id"]]
+                        r["tests mapped"] = ["Unmapped" if m in unmapped else "Mapped" for m in r["id"]]
                         r["size"] = r["size"].round().astype("Int64")
                         # read-only states as text, not checkboxes (R-7); a flag is a badge (R-5)
+                        effort_col = "Ranking value (lower-bounded risk per 1,000 LOC)"
                         show = pd.DataFrame({
-                            "#": r["#"], "risk": r["p"],
-                            "in budget": ["✓ in budget" if b else "–" for b in r["in_budget"].astype(bool)],
-                            "flagged": ["⚑ above threshold" if f else "–" for f in r["flagged"]],
-                            "tests mapped": r["tests mapped"], "module": r["id"], "lines of code": r["size"]})
+                            "#": r["#"], "Risk score": r["p"],
+                            "Budget": ["In budget" if b else "Outside budget" for b in r["in_budget"].astype(bool)],
+                            "Flagged": ["Flagged" if f else "Below threshold" for f in r["flagged"]],
+                            "Tests mapped": r["tests mapped"], "Module": r["id"], "LOC": r["size"]})
                         if key == "effort":  # last, so the status columns stay in view; it orders, it does not flag (R-8)
-                            show["ranking value: lower-bounded risk per 1,000 lines"] = \
-                                (r["p"] * (1 - Z) + Z) / r["size"].where(r["size"] > 0) * 1000
-                        shade = lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] != "–" else ""
-                                             for _ in row]
-                        bold = lambda v: "font-weight: 600; color: #8a4b00" if v != "–" else ""
-                        styled = show.style.apply(shade, axis=1).map(bold, subset=["flagged"]).format(
-                            {"risk": "{:.2f}", "ranking value: lower-bounded risk per 1,000 lines": "{:.2f}"})
+                            show[effort_col] = (r["p"] * (1 - Z) + Z) / r["size"].where(r["size"] > 0) * 1000
+                        styled = show.style.map(status_css, subset=["Budget", "Flagged", "Tests mapped"]).format(
+                            {effort_col: "{:.2f}"} if key == "effort" else {})
                         st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)  # toolbar clears the line (R-13)
                         order = st.session_state.setdefault("rank-order", 0)
                         ev = st.dataframe(styled, on_select="rerun", selection_mode="single-row", hide_index=True,
-                                          width="stretch", key=f"modules-{order}")
+                                          width="stretch", key=f"modules-{order}", column_config={
+                                              "Risk score": risk_column(),
+                                              "Module": st.column_config.TextColumn(width="large"),
+                                              "LOC": st.column_config.NumberColumn(format="%d", help="Lines of code")})
                         if st.button("Reset to rank order", help="Clears any column sorting and the row selection; "
                                                                   "# is always the rank (R-10, R-6)"):
                             st.session_state["rank-order"] = order + 1
@@ -436,7 +464,8 @@ def main() -> None:
                                                        key=pick_key))
                         if row_now is None and sel == 0:
                             st.caption("No row selected: the explanation shows rank 1 by default.")              # R-6
-                        st.caption(f"Shaded rows = inside the budget. Flagged = calibrated risk above the {threshold:.2f} threshold"
+                        st.caption(f"Budget = inside or outside the testing budget. Flagged = calibrated risk above the "
+                                   f"{threshold:.2f} threshold. Unmapped = no test in the coverage map exercises the module"
                                    + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else ".")
                                    + " Select a row to see its reasons.")
                     else:
@@ -483,26 +512,25 @@ def main() -> None:
                 # tables sized to their rows so the page, not the table, scrolls (T-7); wide test column (T-8)
                 fit = lambda n: min(35 * (n + 1) + 3, 528)  # short tables in full; long ones capped at 14 rows
                 cfg = {"#": st.column_config.NumberColumn(pinned=True, width="small"),
-                       "in budget": st.column_config.TextColumn(pinned=True, width="small"),
-                       "test": st.column_config.TextColumn(width="large")}
+                       "Budget": st.column_config.TextColumn(pinned=True, width=115),
+                       "Test": st.column_config.TextColumn(width="large")}
                 ranked_tp = tp[tp["group"] == "ranked"]
                 rest = tp[tp["group"] != "ranked"]
                 if len(ranked_tp):
                     show = pd.DataFrame({"#": ranked_tp["position"],
-                                         "in budget": ["✓ in budget" if b else "–" for b in ranked_tp["in_budget"]],
-                                         "test": ranked_tp["test"],
-                                         "module that sets its rank": ranked_tp["deciding_module"].fillna("—"),
-                                         "from rank": ranked_tp["from rank"].map(lambda v: "—" if pd.isna(v) else int(v))})
-                    styled = show.style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] != "–"
-                                                           else "" for _ in row], axis=1)
+                                         "Budget": ["In budget" if b else "Outside budget" for b in ranked_tp["in_budget"]],
+                                         "Test": ranked_tp["test"],
+                                         "Module that sets its rank": ranked_tp["deciding_module"].fillna("—"),
+                                         "From rank": ranked_tp["from rank"].map(lambda v: "—" if pd.isna(v) else int(v))})
+                    styled = show.style.map(status_css, subset=["Budget"])
                     st.markdown(f"**Ranked tests ({len(ranked_tp)})**, ordered by the rank of the modules they exercise")
                     st.dataframe(styled, hide_index=True, width="stretch", height=fit(len(show)), column_config=cfg)
                 if len(rest):
                     why = {"no_ranked_module": "exercises no changed module", "no_coverage_record": "no coverage record",
                            "zero_size_only": "exercises only empty files", "default order": "default order"}
                     with st.expander(f"Unranked tests ({len(rest)}): run after the ranked tests, in test-name order"):
-                        st.dataframe(pd.DataFrame({"#": rest["position"], "in budget": "–", "test": rest["test"],
-                                                   "why unranked": rest["group"].map(lambda g: why.get(g, g))}),
+                        st.dataframe(pd.DataFrame({"#": rest["position"], "Budget": "Outside budget", "Test": rest["test"],
+                                                   "Why unranked": rest["group"].map(lambda g: why.get(g, g))}),
                                      hide_index=True, width="stretch", height=fit(len(rest)), column_config=cfg)
                 trailing = stats.get("trailing", {})
                 missing = stats.get("ranked_modules_missing_from_map", [])
