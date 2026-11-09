@@ -24,6 +24,7 @@ import ast
 import configparser
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -50,6 +51,9 @@ EXCLUSIONS = ["build_failure", "suite_fails_at_parent", "not_exactly_one_test_ad
               "backport_error_or_not_applicable", "backport_passes_all_three", "flaky"]
 ASSERTION = {"AssertionError", "Failed"}
 TIMEOUT = 1800
+BUILD_TOOLS_DATE = "2026-11-09"  # the project's editable build backend only (setuptools, wheel); see build_env
+
+PROJECT = "flask"  # the distribution re-installed editable (Flask has kept this name throughout)
 
 
 def git(*args: str, repo: str = REPO) -> str:
@@ -188,6 +192,33 @@ def tox_deps(path: str) -> list[str]:
     return [x.strip() for x in raw.splitlines() if x.strip() and ":" not in x and not x.strip().startswith(("http", "-"))]
 
 
+ARCHIVE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)/archive/(?:refs/heads/)?([\w.-]+)\.(?:tar\.gz|zip)")
+_SHAS: dict = {}
+
+
+def tox_archives(path: str) -> list[tuple[str, str]]:
+    """(owner/repo, branch) for every branch archive tox.ini's [testenv] installs (Pallets projects in development)."""
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read(path)
+    return ARCHIVE.findall(cp.get("testenv", "deps", fallback=""))
+
+
+def sha_at(repo: str, branch: str, date: str) -> str:
+    """The last commit on the branch at or before the date (a renamed branch is followed via the default one)."""
+    date = pd.Timestamp(date).tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")  # a "+hh:mm" offset breaks the query
+    k = (repo, branch, date)
+    if k not in _SHAS:
+        for b in (branch, "main", "master"):
+            r = subprocess.run(["gh", "api", f"repos/{repo}/commits?sha={b}&until={date}&per_page=1", "-q", ".[0].sha"],
+                               capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip():
+                _SHAS[k] = r.stdout.strip()
+                break
+        else:
+            raise RuntimeError(f"no commit of {repo}@{branch} before {date}")
+    return _SHAS[k]
+
+
 def has_group(pyproject: str, name: str) -> bool:
     import tomllib
     try:
@@ -208,9 +239,26 @@ def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
         deps, source = ["--group", "tests"], "dependency group tests"
     else:
         deps, source = tox_deps(os.path.join(wt, "tox.ini")), "tox.ini [testenv] deps"
-    r = sh(["uv", "pip", "install", "-q", "--python", vpy, "--exclude-newer", date, "-e", ".", *deps], cwd=wt)
+    # Everything in the environment is dated, the project included (installed normally, which old setuptools can
+    # build). The project is then re-installed editable with no dependencies: only its isolated build backend may
+    # be newer (BUILD_TOOLS_DATE), because setuptools before 64 (Aug 2022) cannot build an editable install as uv
+    # requires it (PEP 660). Amended 9 Nov 2026 before any defect was reproduced; see config second_check.
+    # --compile-bytecode as pip does: old packages compiled at import under the project's "warnings are errors"
+    # pytest setting would otherwise fail on deprecation warnings (blinker 1.4's escape sequences, 2021 anchors).
+    # Branch archives that tox.ini installed (the project's sibling libraries in development) are pinned to their
+    # last commit at the anchor's date; setuptools is installed dated, as every virtualenv of the time had it.
+    pinned = [f"git+https://github.com/{r}@{sha_at(r, br, date)}" for r, br in tox_archives(os.path.join(wt, "tox.ini"))]
+    if pinned:
+        source += " + " + ", ".join(p.split("/")[-1] for p in pinned)
+    r = sh(["uv", "pip", "install", "-q", "--compile-bytecode", "--python", vpy, "--exclude-newer", date, ".",
+            "setuptools", *deps, *pinned], cwd=wt)
     if r.returncode:
         return False, f"{source}: {r.stderr.strip()[-400:]}"
+    newer = [f"--exclude-newer-package={p}={BUILD_TOOLS_DATE}" for p in ("setuptools", "wheel")]
+    r = sh(["uv", "pip", "install", "-q", "--compile-bytecode", "--python", vpy, "--exclude-newer", date, *newer, "--no-deps",
+            "--reinstall-package", PROJECT, "-e", "."], cwd=wt)
+    if r.returncode:
+        return False, f"editable install: {r.stderr.strip()[-400:]}"
     r = sh(["uv", "pip", "install", "-q", "--python", vpy, "coverage"], cwd=wt)  # measurement tool, undated
     if r.returncode:
         return False, f"coverage: {r.stderr.strip()[-300:]}"

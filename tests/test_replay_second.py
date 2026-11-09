@@ -65,3 +65,15 @@ def test_ordering_tie_group_pessimistic_bound_and_must_precede():
     # pessimistic: t_bp treated as covering only m3 (rank 2) -> after t_super, t_same and t_m2
     assert r["pessimistic"]["tf"] == 4
     assert must_precede(coverage, {"m1", "m2", "m3"}, "t_bp") == 1
+
+
+def test_tox_branch_archives_are_found_for_pinning(tmp_path):
+    # Flask's 2020-21 tox.ini tested against its sibling libraries' branch archives; the harness pins each to its
+    # last commit at the anchor's date instead of dropping them (which left Werkzeug 1.x under Flask 2.0 code).
+    tox = tmp_path / "tox.ini"
+    tox.write_text("[testenv]\ndeps =\n    -r requirements/tests.txt\n\n"
+                   "    https://github.com/pallets/werkzeug/archive/master.tar.gz\n"
+                   "    https://github.com/pallets/click/archive/refs/heads/main.zip\n"
+                   "    examples/tutorial[test]\n")
+    from riskrank.replay_second import tox_archives
+    assert tox_archives(str(tox)) == [("pallets/werkzeug", "master"), ("pallets/click", "main")]

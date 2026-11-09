@@ -172,6 +172,15 @@ second_check:
     must precede it under any ranking; the pessimistic bound (back-ported test treated as covering only its
     lowest-ranked module); ranked modules it covers
   minimum: fewer than 12 reproduced defects -> each reported individually, no mean, no comparative conclusion
+  # AMENDED 9 Nov 2026, after a first screen found the environments could not be rebuilt as specified and BEFORE any
+  # defect was reproduced (that screen's records are kept in runs/second_check/aborted/): (1) the project is installed
+  # normally with every package dated, then re-installed editable with no dependencies, its isolated build backend
+  # (setuptools, wheel) dated 2026-11-09, because setuptools before 64 cannot build the editable install uv needs;
+  # (2) packages are byte-compiled at install, as pip does, so the project's "warnings are errors" setting does not fail
+  # on old packages' compile-time deprecation warnings; (3) setuptools is installed dated, as every virtualenv of the
+  # time had it; (4) branch archives that tox.ini's [testenv] installs (the sibling Pallets libraries in development,
+  # 2017-2021 and 2023) are installed at their last commit on or before the anchor's committer date. Unchanged: a
+  # Python version uv cannot provide is a build failure (this workstation, Apple silicon: no 3.6 or 3.7).
   measurement_tools (detail): >-
     coverage.py and a small results plugin (tools/second_check) are installed WITHOUT the date limit, at the newest
     versions supporting the anchor's Python: per-test coverage contexts need coverage 5.0 (Dec 2019), so a dated
