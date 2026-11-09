@@ -199,6 +199,11 @@ second_check:
   # python:3.6 run the same day, 13 build failures). A bug fix under the existing
   # measurement_tools rule, not an amendment: coverage.py is upgraded to the newest version supporting the anchor's
   # Python even when the dated test requirements already brought an older one.
+  # HARNESS BUG FIXED 9 Nov 2026, ~13:00 UTC, AFTER the extended result (11 reproduced) was known, found while auditing
+  # every exclusion for misclassification: the results plugin let a teardown error overwrite a call-phase failure,
+  # so a back-ported test that failed by AssertionError in its body (assertion_failure: only setup/collection errors
+  # are excluded) was recorded as an error when its fixture also failed at teardown. One candidate was affected
+  # (a71c1678, 2019); it is reproduced after the fix. Both totals are reported: 11 before the fix and 12 after it.
   measurement_tools (detail): >-
     coverage.py and a small results plugin (tools/second_check) are installed WITHOUT the date limit, at the newest
     versions supporting the anchor's Python: per-test coverage contexts need coverage 5.0 (Dec 2019), so a dated
