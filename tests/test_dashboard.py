@@ -27,6 +27,12 @@ def text(at):
     return " ".join(m.value for m in at.markdown) + " ".join(str(c.value) for c in at.caption)
 
 
+def plain(at):
+    """The page text with the labelled-rows HTML flattened: tags become single spaces."""
+    import re
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text(at)))
+
+
 def sign_in(at, user, pw):
     at.text_input[0].input(user)
     at.text_input[1].input(pw)
@@ -46,13 +52,14 @@ def test_regions_after_login(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     t = text(at)
-    assert "signed in: **qa-lead**" in t and "Build escalated: **yes**" in t
+    p = plain(at)
+    assert "Signed in qa-lead" in p and "Escalation Yes :" in p and 'rr-pill rr-warn">Escalated' in t  # labelled rows
     warnings = " ".join(w.value for w in at.warning)
     assert "Scores transferred:" in warnings                                  # a banner, not body text (HD-3)
-    assert "threshold 0.50" in t and "decided by the pipeline" in t           # unrounded value vs threshold (HD-1/2)
-    assert "Why this risk score?" in t and "Selected: <code" in t and ">src/x.py</code>" in t       # reasons beside the ranking
-    assert "tests that exercise them: **1** of 3 (33.3% of the suite)" in t   # budget's own unit first (T-3)
-    assert "commit `cm1`" in t and "**1** ranked module not in the map" in t
+    assert "threshold 0.50" in p and "Decided by the pipeline, using the threshold in riskrank.yml" in p           # unrounded value vs threshold (HD-1/2)
+    assert "Why this risk score?" in t and "Selected src/x.py" in p       # reasons beside the ranking
+    assert "In-budget tests 1 of 3 (33.3% of the suite)" in p   # budget's own unit first (T-3)
+    assert "Map commit cm1 Map age" in p and "Not in the map 1 ranked module" in p
     assert at.selectbox(key=at.selectbox[-1].key).label.startswith("Explain module")  # keyboard path (R-3)
     infos = " ".join(i.value for i in at.info)
     assert "No offline evaluation is stored" in infos and "not on `o/r`'s builds" in infos  # corpus banner (O-1)
@@ -64,10 +71,10 @@ def test_header_region_low_severity_fixes(env):
     assert not at.exception, at.exception
     t = text(at)
     assert at.title and all(x.value == "RiskRank: Regression-Test-Prioritisation Dashboard" for x in at.title)  # HD-6, HD-8
-    assert "highest commit-level risk" in t and "Module-level model:" in t                                  # HD-4
+    assert "highest commit-level risk" in plain(at) and "Module-level model" in plain(at)                                  # HD-4
     assert "Project: `o/r`" not in t and "Build run 101" not in t                                           # HD-7
     build = next(b for b in at.selectbox if b.label == "Build")
-    assert build.value.endswith("· escalated")                                                               # HD-5
+    assert build.value.endswith("|  escalated")                                                               # HD-5
     assert at.query_params["project"] == "o/r" and str(at.query_params["build"]).isdigit()                  # HD-9
 
 
@@ -91,7 +98,7 @@ def test_settings_bar_low_severity_fixes(env):
     assert budget.label in ("Budget (% of changed modules)", "Budget (% of changed lines)")            # S-7
     assert all(n.help for n in at.number_input) and all(b.help for b in at.selectbox[2:5])             # S-2, S-4
     assert "Valid range 1–100" in t                                                                    # S-3
-    assert "modules above the 0.50 threshold" in t                                                     # S-5
+    assert "Flagged 1 of 3 modules above the 0.50 threshold" in plain(at)                                                     # S-5
     labels["Risk threshold"].set_value(0.05)
     at = at.run()
     t = text(at)
@@ -108,7 +115,7 @@ def test_ranked_plan_low_severity_fixes(env):
     assert list(table.columns[:4]) == ["#", "risk", "in budget", "flagged"]                              # R-8
     t = text(at)
     assert "No row selected: the explanation shows rank 1 by default." in t                              # R-6
-    assert "modules touched" in t or "module touched" in t
+    assert "Touched 3 modules" in plain(at)
     assert "ranks 1–1" not in t                                                                          # R-12
     assert any(b.label == "Reset to rank order" for b in at.button)                                      # R-10
     next(b for b in at.button if b.label == "Reset to rank order").click()
@@ -141,7 +148,7 @@ def test_test_plan_low_severity_fixes(env):
     ranked = next(d for d in tables if "module that sets its rank" in d.columns)
     assert "None" not in ranked.astype(str).to_numpy()                                                  # T-5
     assert list(ranked.columns[:2]) == ["#", "in budget"]                                               # T-6
-    assert "of the 3 tests, 1 is unranked" in t and "excluded for zero size" not in t                  # T-4, T-10
+    assert "Unranked tests 1 of the 3" in plain(at) and "excluded for zero size" not in t                  # T-4, T-10
 
 
 def test_commit_view_low_severity_fixes(env):
@@ -152,7 +159,7 @@ def test_commit_view_low_severity_fixes(env):
     at = at.run()
     assert not at.exception, at.exception
     t = text(at)
-    assert "risk **0.6000**" in t                                                                      # C-5
+    assert "Risk 0.6000" in plain(at)                                                                      # C-5
     assert "Showing the top" in t and "five largest per commit" in t                                   # C-9
     table = next(d.value for d in at.dataframe if "commit" in d.value.columns)
     assert table["scored in build at"].str.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d$").all()                 # C-6
@@ -207,7 +214,7 @@ def test_coverage_map_age_carries_a_date(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     assert at.metric[2].value == "4 commits ago, committed 8 Nov 2026, 10:00 WAT"
-    assert "(4 commits ago, committed 8 Nov 2026, 10:00 WAT)" in text(at)
+    assert "Map age 4 commits ago, committed 8 Nov 2026, 10:00 WAT" in plain(at)
 
 
 def test_dropdown_still_chooses_the_explained_module(env):
@@ -218,4 +225,4 @@ def test_dropdown_still_chooses_the_explained_module(env):
     at = at.run()
     assert not at.exception, at.exception
     t = text(at)
-    assert ">src/y.py</code>" in t and "No row selected" not in t
+    assert "Selected src/y.py" in plain(at) and "No row selected" not in t

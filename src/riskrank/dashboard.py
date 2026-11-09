@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import altair as alt
@@ -89,20 +90,46 @@ def store(url: str) -> Store:
     return Store(url)
 
 
-def escalation_text(run: dict, commits: pd.DataFrame) -> str:
-    """The pipeline's escalation decision, with the deciding value unrounded beside the threshold it was
-    compared with (walkthrough HD-1, HD-2, HD-10). The settings bar does not change it."""
+def _md(v: str) -> str:
+    """Escape a value and keep its **bold** and `code` (values sit inside an HTML block)."""
+    v = html.escape(str(v), quote=False)
+    v = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", v)
+    return re.sub(r"`(.+?)`", r"<code>\1</code>", v)
+
+
+def facts(rows: list[tuple[str, str | None]], title: str | None = None,
+          status: tuple[str, str] | None = None) -> None:
+    """Labelled rows, one fact per line (feedback 9 Nov, replacing the '·' separator): a grey small-capitals
+    label, the value beside it, important values in bold. Colour is used only for a status pill:
+    status = ("warn" | "ok" | "info", text)."""
+    head = ""
+    if title:
+        pill = f' <span class="rr-pill rr-{status[0]}">{html.escape(status[1])}</span>' if status else ""
+        head = f'<div class="rr-t">{html.escape(title)}{pill}</div>'
+    body = "".join(f'<div class="rr-k">{html.escape(k)}</div><div class="rr-v">{_md(v)}</div>'
+                   for k, v in rows if v not in (None, ""))
+    st.markdown(f'<div class="rr-facts">{head}<div class="rr-grid">{body}</div></div>', unsafe_allow_html=True)
+
+
+def escalation_facts(run: dict, commits: pd.DataFrame) -> tuple[tuple[str, str], list[tuple[str, str]]]:
+    """The pipeline's escalation decision as (status pill, rows), the deciding value unrounded beside the
+    threshold (HD-1, HD-2, HD-10). The settings bar does not change it."""
     status = run["jit_status"]
     if status == "not configured":
-        return "Build escalation: not configured"
+        return ("info", "Escalation not configured"), [("Escalation", "no just-in-time model is configured")]
     if status != "assessed":
-        return f"Build escalated: not assessed ({status})"
+        return ("info", "Not assessed"), [("Escalation", f"not assessed ({status})")]
     inside = commits[commits["in_training_range"].astype(bool)] if len(commits) else commits
     thr = float(run["risk_threshold"] or 0.5)
     top = inside["p"].max() if len(inside) else None
-    cmp = "" if top is None else f" (highest commit-level risk {top:.4f} {'>' if top > thr else '≤'} threshold {thr:.2f})"
-    return (f"Build escalated: **{'yes' if run['escalated'] else 'no'}**{cmp} · decided by the pipeline with "
-            "`riskrank.yml`'s threshold, counting only commits whose features lie inside the model's training range")
+    yes = bool(run["escalated"])
+    value = ("**Yes**" if yes else "**No**") + ("" if top is None else
+             f": highest commit-level risk **{top:.4f}** {'exceeds' if top > thr else 'does not exceed'} "
+             f"threshold **{thr:.2f}**")
+    return (("warn", "Escalated") if yes else ("ok", "Not escalated")), [
+        ("Escalation", value),
+        ("Decided by", "the pipeline, using the threshold in `riskrank.yml`"),
+        ("Counts", "only commits whose features lie inside the model's training range")]
 
 
 def build_label(r) -> str:
@@ -110,8 +137,8 @@ def build_label(r) -> str:
     one (walkthrough HD-5)."""
     marks = [m for m, on in (("escalated", r.escalated), ("default order", r.status == "default order"),
                              ("partial", r.status == "partial"), ("stale map", r.stale_map)) if on]
-    return (f"{str(r.created)[:16].replace('T', ' ')} · {str(r.commit_after or '')[:7]} · run {r.build_ref}"
-            + (f" · {', '.join(marks)}" if marks else ""))
+    return (f"{str(r.created)[:16].replace('T', ' ')}  |  {str(r.commit_after or '')[:7]}  |  run {r.build_ref}"
+            + (f"  |  {', '.join(marks)}" if marks else ""))
 
 
 def reading(feature: str, value: float, direction: str) -> str:
@@ -150,11 +177,9 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
                       raw: float | None = None, domain: list[float] | None = None, default: bool = False,
                       digits: int = 2, top_only: bool = False) -> None:
     st.markdown("## Why this risk score?")
-    # a long path wraps instead of breaking mid-word or overflowing; copying it gives the plain path (E-8)
-    shown = f'<code style="white-space: normal; overflow-wrap: anywhere">{html.escape(title)}</code>'
-    st.markdown(f"Selected: {shown} · risk **{p:.{digits}f}**" + (f" · rank {rank_no}" if rank_no else "")
-                + (" (shown by default; select a row to change)" if default else ""),                  # E-6
-                unsafe_allow_html=True)
+    # a long path wraps at any point instead of overflowing (.rr-v code); copying it gives the plain path (E-8)
+    facts([("Selected", f"`{title}`" + (" (shown by default; select a row to change)" if default else "")),  # E-6, E-8
+           ("Risk", f"**{p:.{digits}f}**"), ("Rank", str(rank_no) if rank_no else None)])
     if not codes:
         st.info("No reason codes stored for this score.")
         return
@@ -183,6 +208,18 @@ def main() -> None:
                 "h2 {font-size: 1.3rem !important} h3 {font-size: 1.08rem !important} "
                 "[data-testid='stMetricValue'], [data-testid='stMetricValue'] * {font-size: 1.15rem !important; "
                 "white-space: normal !important; overflow: visible !important; text-overflow: clip !important}"
+                ".rr-facts {margin: 0.15rem 0 0.9rem} "
+                ".rr-t {font-weight: 600; font-size: 0.98rem; margin-bottom: 0.45rem} "
+                ".rr-grid {display: grid; grid-template-columns: max-content 1fr; column-gap: 1.25rem; "
+                "row-gap: 0.32rem; align-items: baseline} "
+                ".rr-k {font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase; color: #6b7280; "
+                "white-space: nowrap} "
+                ".rr-v {font-size: 0.95rem; line-height: 1.45} "
+                ".rr-v code {font-size: 0.85rem; white-space: normal; overflow-wrap: anywhere} "
+                ".rr-pill {display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 0.08rem 0.6rem; "
+                "border-radius: 999px; margin-left: 0.5rem; vertical-align: 0.1rem} "
+                ".rr-warn {background: #fdecd2; color: #8a4b00} .rr-ok {background: #e0f2e6; color: #1e6b3a} "
+                ".rr-info {background: #eef1f5; color: #44505f}"
                 "</style>", unsafe_allow_html=True)
     user = login()
     db = store(os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
@@ -217,9 +254,10 @@ def main() -> None:
     shown_model = (run["jit_model"] or "none") if view_is_commits else (module_model or "none")
     with top_l:
         st.title(PRODUCT)
-        st.markdown(f"{'Commit' if view_is_commits else 'Module'}-level model: `{shown_model}` (calibrated) · "
-                    f"commit `{str(run['commit_after'] or '')[:7]}`")
-        st.markdown(f"{escalation_text(run, commits_this)} · signed in: **{user}**")
+        pill, esc_rows = escalation_facts(run, commits_this)
+        facts([(f"{'Commit' if view_is_commits else 'Module'}-level model", f"`{shown_model}` (calibrated)")]
+              + esc_rows + [("Signed in", f"**{user}**")],  # the pushed commit is the tile below
+              title="Build decision", status=pill)
     corpus_note = {False: run["transferred"], True: (run.get("detail") or {}).get("commit_transferred", True)}
     if corpus_note[view_is_commits]:
         st.warning(f"**Scores transferred:** `{shown_model}` was trained on another corpus "
@@ -337,15 +375,18 @@ def main() -> None:
                     k = int(r["in_budget"].sum()) if len(r) else 0
                     last_in = int(r.loc[r["in_budget"].astype(bool), "#"].max()) if k else 0
                     touched = (run.get('detail') or {}).get('modules_touched', len(r))
-                    st.markdown(f"{touched} module{'' if touched == 1 else 's'} touched · "
-                                f"{budget:g}% budget ({'of lines' if unit == 'lines' else 'of modules'}) covers "
-                                + ((f"rank 1" if last_in == 1 else f"ranks 1–{last_in}") if k else "no module")
-                                + (f" · realised share {share:.1%}" if share is not None else "")
-                                + (" (the module at the boundary is included whole, so the share can exceed the budget)"
-                                   if share is not None and unit == "lines" and share > budget / 100 + 1e-9 else ""))
+                    over = share is not None and unit == "lines" and share > budget / 100 + 1e-9
+                    facts([("Touched", f"**{touched}** module{'' if touched == 1 else 's'}"),
+                           ("Budget", f"**{budget:g}%** {'of changed lines' if unit == 'lines' else 'of changed modules'}"
+                                      + (", covering " + ("rank 1" if last_in == 1 else f"ranks 1–{last_in}")
+                                         if k else ", covering no module")),
+                           ("Realised share", None if share is None else f"**{share:.1%}**"
+                            + (" (the module at the boundary is included whole, so the share can exceed the budget)"
+                               if over else "")),
+                           ("Flagged", None if not len(r) else                                                    # S-5
+                            f"**{int(r['flagged'].sum())}** of {len(r)} module{'' if len(r) == 1 else 's'} above "
+                            f"the {threshold:.2f} threshold")])
                     if len(r):
-                        n_flag = int(r["flagged"].sum())
-                        st.caption(f"{n_flag} of {len(r)} module{'' if len(r) == 1 else 's'} above the {threshold:.2f} threshold.")          # S-5
                         if preview:
                             base = rank(ranking.rename(columns={"module": "id"}), stored["ranking_key"])
                             was = set(base.loc[mark(base, stored["budget_unit"], stored["budget"] / 100,
@@ -423,9 +464,9 @@ def main() -> None:
                 unit_word = "of the changed lines" if stored["budget_unit"] == "lines" else "of the changed modules"
                 top_in = (int(ranking.loc[ranking["in_budget"].astype(bool), "rank"].max())
                           if "in_budget" in ranking and ranking["in_budget"].astype(bool).any() else 0)
-                st.markdown(f"The {stored['budget']:g}% budget ({unit_word}) selects "
-                            + ("no rank" if not top_in else "rank 1" if top_in == 1 else f"ranks 1–{top_in}")  # R-12
-                            + f" · tests that exercise them: **{n_in}** of {len(tp)} ({n_in / len(tp):.1%} of the suite)")
+                facts([("Budget", f"**{stored['budget']:g}%** {unit_word}, selecting "
+                                  + ("no rank" if not top_in else "rank 1" if top_in == 1 else f"ranks 1–{top_in}")),  # R-12
+                       ("In-budget tests", f"**{n_in}** of {len(tp)} ({n_in / len(tp):.1%} of the suite)")])
                 missing_now = (stats.get("ranked_modules_missing_from_map") or [])
                 in_budget_mods = set(ranking.loc[ranking["in_budget"].astype(bool), "module"]) if "in_budget" in ranking else set()
                 if n_in == 0:
@@ -466,14 +507,14 @@ def main() -> None:
                 trailing = stats.get("trailing", {})
                 missing = stats.get("ranked_modules_missing_from_map", [])
                 zero = trailing.get("zero_size_only", 0)
-                st.markdown(
-                    f"Coverage map at commit `{str(run.get('coverage_map_commit') or 'unknown')[:7]}`"
-                    + f" ({map_age(stats)})"
-                    + f" · **{len(missing)}** ranked module{'' if len(missing) == 1 else 's'} not in the map"       # T-9
-                    + (f" ({', '.join(missing)})" if missing else "")
-                    + f" · of the {len(tp)} tests, {len(rest)} {'is' if len(rest) == 1 else 'are'} unranked: {trailing.get('no_ranked_module', 0)} exercise "
-                    f"no changed module, {trailing.get('no_coverage_record', 0)} have no coverage record"
-                    + (f", {zero} exercise only empty files, which are not ranked" if zero else ""))              # T-10
+                facts([("Map commit", f"`{str(run.get('coverage_map_commit') or 'unknown')[:7]}`"), ("Map age", map_age(stats)),
+                       ("Not in the map", f"**{len(missing)}** ranked module{'' if len(missing) == 1 else 's'}"  # T-9
+                                          + (f" ({', '.join(missing)})" if missing else "")),
+                       ("Unranked tests", f"**{len(rest)}** of the {len(tp)}: {trailing.get('no_ranked_module', 0)} "
+                                          f"exercise no changed module, {trailing.get('no_coverage_record', 0)} have "
+                                          "no coverage record"
+                                          + (f", {zero} exercise only empty files, which are not ranked" if zero else ""))],  # T-10
+                      title="Plan details")
 
     with tab_off, st.container(border=True):
             # ---------------------------------------------------------------- evaluation panels
@@ -488,8 +529,9 @@ def main() -> None:
                 if not off:
                     st.info(f"No offline evaluation is stored for `{module_model}` yet.")
                 else:
-                    st.caption(f"`{module_model}` · corpus: {off['corpus']} · evaluated {str(off['created'])[:10]} · "
-                               "default key, independent of the settings above")
+                    facts([("Model", f"`{module_model}`"), ("Corpus", off["corpus"]),
+                           ("Evaluated", str(off["created"])[:10]),
+                           ("Ranking key", "default, independent of the settings above")])
                     curves = (off.get("detail") or {}).get("curves", {})
                     d = pd.DataFrame([{"ordering": name, "lines inspected (%)": x * 100, "defect recall (%)": y * 100}
                                       for name, pts in curves.items() for x, y in pts])
@@ -519,8 +561,8 @@ def main() -> None:
                     vals = [("system", off["recall"])] + [(b["baseline"], b["recall"]) for b in off["baselines"]
                                                            if b["recall"] is not None]
                     best = max(vals, key=lambda v: v[1])
-                    st.markdown("Defect recall at the 20% budget: " + " · ".join(f"{n} {v:.1%}" for n, v in vals)
-                                + f" (highest: {best[0]})")
+                    facts([(n, f"**{v:.1%}**" + ("  (highest)" if n == best[0] else ""))
+                           for n, v in sorted(vals, key=lambda v: -v[1])], title="Defect recall at the 20% budget")
             with e2:
                 st.markdown("### Calibration: predicted against observed")
                 bins = ((off or {}).get("detail") or {}).get("reliability", [])
@@ -529,10 +571,11 @@ def main() -> None:
                 else:
                     det = off["detail"]
                     prev = det.get("defective", 0) / det["rows"] if det.get("rows") else None
-                    st.caption(f"Brier score: {det.get('brier', float('nan')):.3f}"                                # O-6
-                               + (f" (a constant forecast of the defect rate, {prev:.1%}, scores {prev * (1 - prev):.3f}; "
-                                  "lower is better)" if prev is not None else "")
-                               + " · grey diagonal = perfect calibration · numbers = modules in each bin")
+                    facts([("Brier score", f"**{det.get('brier', float('nan')):.3f}** (lower is better)"),       # O-6
+                           ("Baseline", None if prev is None else
+                            f"a constant forecast of the defect rate, {prev:.1%}, scores {prev * (1 - prev):.3f}"),
+                           ("Reading", "grey diagonal = perfect calibration; numbers = modules in each bin")])
+                    st.markdown('<div style="height:0.9rem"></div>', unsafe_allow_html=True)  # toolbar clears the rows
                     b = pd.DataFrame(bins)
                     prob_scale = alt.Scale(domain=[0, 1], nice=False, padding=0)
                     enc = dict(x=alt.X("mean_p:Q", title="predicted risk", scale=prob_scale),
