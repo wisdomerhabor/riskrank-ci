@@ -129,7 +129,10 @@ def promise() -> dict[str, list[tuple[str, pd.DataFrame]]]:
             x = df[CK].apply(pd.to_numeric, errors="raise")
             x["label"] = (pd.to_numeric(df["bug"]) > 0).to_numpy()
             x["size"] = x["loc"]
-            x["id"] = (f[:-4] + ":" + df["name"].astype(str)).to_numpy()
+            # The files repeat the header "name" (system, then class); pandas reads the class column as
+            # "name.1". The prop releases carry no class name, so their modules are numbered, as NASA's are.
+            cls = df["name.1"].astype(str) if "name.1" in df.columns else pd.Series(range(len(df))).astype(str)
+            x["id"] = (f[:-4] + ":" + cls).to_numpy()
             releases.append((f[:-4], x))
         if len(releases) >= 2:
             out[system] = releases

@@ -73,3 +73,14 @@ def test_refit_in_score_phase_reproduces_tuning(run):
     r1, _ = rb.score_task(a, s)
     r2, _ = rb.score_task(a, s)
     assert r1[0]["aucpr"] == r2[0]["aucpr"]
+
+
+@pytest.mark.skipif(not os.path.isdir(benchmarks.PROMISE_DIR), reason="benchmark data not downloaded")
+def test_every_module_id_is_unique_within_its_release():
+    # The PROMISE files repeat the header "name" (system, then class); reading the first gave every class
+    # in a release the same id, which broke tie-breaks and collapsed the pooled predictions.
+    for system, releases in benchmarks.promise().items():
+        for release, x in releases:
+            assert not x["id"].duplicated().any(), release
+    for name, x in benchmarks.nasa().items():
+        assert not x["id"].duplicated().any(), name
