@@ -247,9 +247,10 @@ def main() -> None:
             st.markdown("## Risk-ranked modules changed by this build")
             k = int(r["in_budget"].sum()) if len(r) else 0
             last_in = int(r.loc[r["in_budget"].astype(bool), "#"].max()) if k else 0
-            st.markdown(f"{(run.get('detail') or {}).get('modules_touched', len(r))} modules touched · "
+            touched = (run.get('detail') or {}).get('modules_touched', len(r))
+            st.markdown(f"{touched} module{'' if touched == 1 else 's'} touched · "
                         f"{budget:g}% budget ({'of lines' if unit == 'lines' else 'of modules'}) covers "
-                        + (f"ranks 1–{last_in}" if k else "no module")
+                        + ((f"rank 1" if last_in == 1 else f"ranks 1–{last_in}") if k else "no module")
                         + (f" · realised share {share:.1%}" if share is not None else "")
                         + (" (the module at the boundary is included whole, so the share can exceed the budget)"
                            if share is not None and unit == "lines" and share > budget / 100 + 1e-9 else ""))
@@ -269,20 +270,35 @@ def main() -> None:
                 unmapped = set(((run.get("detail") or {}).get("stats") or {}).get("ranked_modules_missing_from_map", []))
                 r["tests mapped"] = ["no tests mapped" if m in unmapped else "yes" for m in r["id"]]
                 r["size"] = r["size"].round().astype("Int64")
-                show = r[["#", "p", "in_budget", "flagged", "tests mapped", "id", "size"]].rename(
-                    columns={"id": "module", "p": "risk", "size": "lines of code", "in_budget": "in budget"})
-                if key == "effort":
-                    show.insert(4, "lower-bounded risk per 1,000 lines",
-                                (r["p"] * (1 - Z) + Z) / r["size"].where(r["size"] > 0) * 1000)
-                styled = show.style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"]
-                                                       else "" for _ in row], axis=1).format({"risk": "{:.2f}"})
+                # read-only states as text, not checkboxes (R-7); a flag is a badge (R-5)
+                show = pd.DataFrame({
+                    "#": r["#"], "risk": r["p"],
+                    "in budget": ["✓ in budget" if b else "–" for b in r["in_budget"].astype(bool)],
+                    "flagged": ["⚑ above threshold" if f else "–" for f in r["flagged"]],
+                    "tests mapped": r["tests mapped"], "module": r["id"], "lines of code": r["size"]})
+                if key == "effort":  # last, so the status columns stay in view; it orders, it does not flag (R-8)
+                    show["ranking value: lower-bounded risk per 1,000 lines"] = \
+                        (r["p"] * (1 - Z) + Z) / r["size"].where(r["size"] > 0) * 1000
+                shade = lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] != "–" else ""
+                                     for _ in row]
+                bold = lambda v: "font-weight: 600; color: #8a4b00" if v != "–" else ""
+                styled = show.style.apply(shade, axis=1).map(bold, subset=["flagged"]).format(
+                    {"risk": "{:.2f}", "ranking value: lower-bounded risk per 1,000 lines": "{:.2f}"})
+                st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)  # toolbar clears the line (R-13)
+                order = st.session_state.setdefault("rank-order", 0)
                 ev = st.dataframe(styled, on_select="rerun", selection_mode="single-row", hide_index=True,
-                                  width="stretch", key="modules")
+                                  width="stretch", key=f"modules-{order}")
+                if st.button("Reset to rank order", help="Clears any column sorting and the row selection; "
+                                                          "# is always the rank (R-10, R-6)"):
+                    st.session_state["rank-order"] = order + 1
+                    st.rerun()
                 clicked = ev.selection.rows[0] if ev.selection.rows else 0
+                if not ev.selection.rows:
+                    st.caption("No row selected: the explanation shows rank 1 by default.")              # R-6
                 names = [f"{int(n)}. {m}" for n, m in zip(r["#"], r["id"])]
                 sel = names.index(st.selectbox("Explain module (keyboard: Tab here, then arrow keys)", names,
                                                index=clicked, key=f"explain-{run_id}-{key}-{unit}"))
-                st.caption(f"Shaded rows = inside the budget. Flagged = risk above the {threshold:.2f} threshold"
+                st.caption(f"Shaded rows = inside the budget. Flagged = calibrated risk above the {threshold:.2f} threshold"
                            + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else ".")
                            + " Select a row to see its reasons.")
             else:
@@ -305,9 +321,10 @@ def main() -> None:
         stored_rank = dict(zip(ranking["module"], ranking["rank"]))
         tp["from rank"] = tp["deciding_module"].map(stored_rank).astype("Int64")
         unit_word = "of the changed lines" if stored["budget_unit"] == "lines" else "of the changed modules"
-        st.markdown(f"The {stored['budget']:g}% budget ({unit_word}) selects ranks "
-                    + (f"1–{int(ranking.loc[ranking['in_budget'].astype(bool), 'rank'].max())}"
-                       if "in_budget" in ranking and ranking["in_budget"].astype(bool).any() else "none")
+        top_in = (int(ranking.loc[ranking["in_budget"].astype(bool), "rank"].max())
+                  if "in_budget" in ranking and ranking["in_budget"].astype(bool).any() else 0)
+        st.markdown(f"The {stored['budget']:g}% budget ({unit_word}) selects "
+                    + ("no rank" if not top_in else "rank 1" if top_in == 1 else f"ranks 1–{top_in}")  # R-12
                     + f" · tests that exercise them: **{n_in}** of {len(tp)} ({n_in / len(tp):.1%} of the suite)")
         missing_now = (stats.get("ranked_modules_missing_from_map") or [])
         in_budget_mods = set(ranking.loc[ranking["in_budget"].astype(bool), "module"]) if "in_budget" in ranking else set()

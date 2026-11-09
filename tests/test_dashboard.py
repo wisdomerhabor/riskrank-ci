@@ -97,3 +97,19 @@ def test_settings_bar_low_severity_fixes(env):
     t = text(at)
     assert "Preview" in " ".join(i.value for i in at.info)
     assert "no change to the in-budget selection" in t                                                 # S-9
+
+
+def test_ranked_plan_low_severity_fixes(env):
+    """Walkthrough ranked-plan findings R-5 to R-13 (severity 1 and 2); R-11 was fixed in 3b2babb."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    table = at.dataframe[0].value
+    assert set(table["in budget"]) <= {"✓ in budget", "–"} and set(table["flagged"]) <= {"⚑ above threshold", "–"}  # R-5, R-7
+    assert list(table.columns[:4]) == ["#", "risk", "in budget", "flagged"]                              # R-8
+    t = text(at)
+    assert "No row selected: the explanation shows rank 1 by default." in t                              # R-6
+    assert "modules touched" in t or "module touched" in t
+    assert "ranks 1–1" not in t                                                                          # R-12
+    assert any(b.label == "Reset to rank order" for b in at.button)                                      # R-10
+    next(b for b in at.button if b.label == "Reset to rank order").click()
+    assert not at.run().exception
