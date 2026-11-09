@@ -230,3 +230,10 @@ def test_dropdown_still_chooses_the_explained_module(env):
     assert not at.exception, at.exception
     t = text(at)
     assert "Selected src/y.py" in plain(at) and "No row selected" not in t
+
+
+def test_budget_coverage_names_the_module_count_and_the_ranks():
+    from riskrank.dashboard import covering
+    assert covering(0, 0) == "covering no module"
+    assert covering(1, 1) == "covering 1 module (rank 1)"
+    assert covering(4, 4) == "covering 4 modules (ranks 1–4)"

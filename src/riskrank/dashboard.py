@@ -148,6 +148,16 @@ def status_css(v) -> str:
     return STATUS_CSS.get(v, "")
 
 
+def covering(n: int, last: int) -> str:
+    """Budget coverage in one wording everywhere: 'covering 1 module (rank 1)' or
+    'covering n modules (ranks 1–n)' (the student's wording, 9 Nov)."""
+    if not n:
+        return "covering no module"
+    if n == 1:
+        return f"covering 1 module (rank {last})"
+    return f"covering {n} modules (ranks 1–{last})"
+
+
 def risk_column(digits: int = 2, width="small") -> st.column_config.NumberColumn:
     """The calibrated risk as a plain number (the progress bar was removed at the student's request, 9 Nov)."""
     return st.column_config.NumberColumn("Risk score", format=f"%.{digits}f", width=width,
@@ -410,8 +420,7 @@ def main() -> None:
                     over = share is not None and unit == "lines" and share > budget / 100 + 1e-9
                     facts([("Touched", f"**{touched}** module{'' if touched == 1 else 's'}"),
                            ("Budget", f"**{budget:g}%** {'of changed lines' if unit == 'lines' else 'of changed modules'}"
-                                      + (", covering " + ("rank 1" if last_in == 1 else f"ranks 1–{last_in}")
-                                         if k else ", covering no module")),
+                                      + ", " + covering(k, last_in)),
                            ("Realised share", None if share is None else f"**{share:.1%}**"
                             + (" (the module at the boundary is included whole, so the share can exceed the budget)"
                                if over else "")),
@@ -493,11 +502,12 @@ def main() -> None:
                 n_in = int(tp["in_budget"].sum())
                 stored_rank = dict(zip(ranking["module"], ranking["rank"]))
                 tp["from rank"] = tp["deciding_module"].map(stored_rank).astype("Int64")
-                unit_word = "of the changed lines" if stored["budget_unit"] == "lines" else "of the changed modules"
-                top_in = (int(ranking.loc[ranking["in_budget"].astype(bool), "rank"].max())
-                          if "in_budget" in ranking and ranking["in_budget"].astype(bool).any() else 0)
-                facts([("Budget", f"**{stored['budget']:g}%** {unit_word}, selecting "
-                                  + ("no rank" if not top_in else "rank 1" if top_in == 1 else f"ranks 1–{top_in}")),  # R-12
+                unit_word = "of changed lines" if stored["budget_unit"] == "lines" else "of changed modules"
+                in_mask = ranking["in_budget"].astype(bool) if "in_budget" in ranking else None
+                n_mods = int(in_mask.sum()) if in_mask is not None else 0
+                top_in = int(ranking.loc[in_mask, "rank"].max()) if n_mods else 0
+                facts([("Budget", f"**{stored['budget']:g}%** {unit_word}, "
+                                  + covering(n_mods, top_in)),  # R-12
                        ("In-budget tests", f"**{n_in}** of {len(tp)} ({n_in / len(tp):.1%} of the suite)")])
                 missing_now = (stats.get("ranked_modules_missing_from_map") or [])
                 in_budget_mods = set(ranking.loc[ranking["in_budget"].astype(bool), "module"]) if "in_budget" in ranking else set()
