@@ -30,6 +30,7 @@ FEATURE_LABELS = {
     "aexp": "author experience", "arexp": "author recent experience", "asexp": "author subsystem experience",
 }
 BASELINE_ORDER = ["system", "random", "largest-first", "smallest-first", "recency-based"]
+PRODUCT = "RiskRank: Regression-Test-Prioritisation Dashboard"  # one name on the tab, the login page and the heading (walkthrough HD-6)
 
 
 def login() -> str:
@@ -37,7 +38,7 @@ def login() -> str:
     if st.session_state.get("user"):
         return st.session_state["user"]
     record = auth.load(os.path.expanduser(os.environ.get("RISKRANK_AUTH", "~/.config/riskrank/dashboard-auth.json")))
-    st.title("RiskRank dashboard")
+    st.title(PRODUCT)
     if record is None:
         st.error("No login is configured. Run `python -m riskrank.auth` on the workstation first.")
         st.stop()
@@ -68,9 +69,18 @@ def escalation_text(run: dict, commits: pd.DataFrame) -> str:
     inside = commits[commits["in_training_range"].astype(bool)] if len(commits) else commits
     thr = float(run["risk_threshold"] or 0.5)
     top = inside["p"].max() if len(inside) else None
-    cmp = "" if top is None else f" (highest commit risk {top:.4f} {'>' if top > thr else '≤'} threshold {thr:.2f})"
+    cmp = "" if top is None else f" (highest commit-level risk {top:.4f} {'>' if top > thr else '≤'} threshold {thr:.2f})"
     return (f"Build escalated: **{'yes' if run['escalated'] else 'no'}**{cmp} · decided by the pipeline with "
             "`riskrank.yml`'s threshold, counting only commits whose features lie inside the model's training range")
+
+
+def build_label(r) -> str:
+    """A build option with its status, so an escalated or degraded build is found without opening each
+    one (walkthrough HD-5)."""
+    marks = [m for m, on in (("escalated", r.escalated), ("default order", r.status == "default order"),
+                             ("partial", r.status == "partial"), ("stale map", r.stale_map)) if on]
+    return (f"{str(r.created)[:16].replace('T', ' ')} · {str(r.commit_after or '')[:7]} · run {r.build_ref}"
+            + (f" · {', '.join(marks)}" if marks else ""))
 
 
 def reason_chart(codes: list[dict]) -> alt.Chart:
@@ -86,7 +96,7 @@ def reason_chart(codes: list[dict]) -> alt.Chart:
 
 
 def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dict], model: dict | None) -> None:
-    st.markdown("#### Why this risk score?")
+    st.markdown("## Why this risk score?")
     st.markdown(f"Selected: `{title}` · risk **{p:.2f}**" + (f" · rank {rank_no}" if rank_no else ""))
     if not codes:
         st.info("No reason codes stored for this score.")
@@ -102,24 +112,28 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
 
 
 def main() -> None:
-    st.set_page_config(page_title="RiskRank dashboard", layout="wide")
+    st.set_page_config(page_title=PRODUCT, layout="wide")
     user = login()
     db = store(os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
 
     projects = db.projects()
     if not projects:
-        st.title("Regression-Test-Prioritisation Dashboard")
+        st.title(PRODUCT)
         st.info("No pipeline run has been ingested yet. Run `python -m riskrank.ingest --repo <owner/name>`.")
         st.stop()
 
     # ---------------------------------------------------------------- header
     top_l, top_r = st.columns([3, 2])
     with top_r:
-        project = st.selectbox("Project", projects)
+        qp = st.query_params
+        project = st.selectbox("Project", projects,
+                               index=projects.index(qp["project"]) if qp.get("project") in projects else 0)
         runs = db.runtime_runs(project)
-        labels = {f"{str(r.created)[:16].replace('T', ' ')} · {str(r.commit_after or '')[:7]} · run {r.build_ref}": int(r.id)
-                  for r in runs.itertuples()}
-        run_id = labels[st.selectbox("Build", list(labels))]
+        labels = {build_label(r): int(r.id) for r in runs.itertuples()}
+        ids = list(labels.values())
+        wanted = int(qp["build"]) if str(qp.get("build", "")).isdigit() else None
+        run_id = labels[st.selectbox("Build", list(labels), index=ids.index(wanted) if wanted in ids else 0)]
+        qp["project"], qp["build"] = project, str(run_id)  # the address bar keeps the choice (HD-9)
     run = db.run(run_id)
     ranking = db.ranking(run_id)
     commits = db.commit_scores(project)
@@ -131,9 +145,9 @@ def main() -> None:
     view_is_commits = st.session_state.get("granularity") == "commits"
     shown_model = (run["jit_model"] or "none") if view_is_commits else (module_model or "none")
     with top_l:
-        st.markdown("## Regression-Test-Prioritisation Dashboard")
-        st.markdown(f"Project: `{project}` · {'Commit' if view_is_commits else 'Module'} model: `{shown_model}` "
-                    f"(calibrated) · Build run {run['build_ref']} · commit `{str(run['commit_after'] or '')[:7]}`")
+        st.title(PRODUCT)
+        st.markdown(f"{'Commit' if view_is_commits else 'Module'}-level model: `{shown_model}` (calibrated) · "
+                    f"commit `{str(run['commit_after'] or '')[:7]}`")
         st.markdown(f"{escalation_text(run, commits_this)} · signed in: **{user}**")
     corpus_note = {False: run["transferred"], True: (run.get("detail") or {}).get("commit_transferred", True)}
     if corpus_note[view_is_commits]:
@@ -175,7 +189,7 @@ def main() -> None:
     left, right = st.columns([3, 2])
     if commit_view:
         with left:
-            st.markdown("#### Stored commit risk scores (historical, not a live ranking)")
+            st.markdown("## Stored commit risk scores (historical, not a live ranking)")
             if commits.empty:
                 st.info("No commit has been scored in this project "
                         + ("(no just-in-time model is configured)." if run["jit_status"] == "not configured" else "."))
@@ -214,7 +228,7 @@ def main() -> None:
         else:
             r, share = ranking.rename(columns={"module": "id"}), None
         with left:
-            st.markdown("#### Risk-ranked modules changed by this build")
+            st.markdown("## Risk-ranked modules changed by this build")
             k = int(r["in_budget"].sum()) if len(r) else 0
             last_in = int(r.loc[r["in_budget"].astype(bool), "#"].max()) if k else 0
             st.markdown(f"{(run.get('detail') or {}).get('modules_touched', len(r))} modules touched · "
@@ -254,7 +268,7 @@ def main() -> None:
     # ---------------------------------------------------------------- ordered test plan
     tp = db.test_plan(run_id)
     stats = (run.get("detail") or {}).get("stats") or {}
-    st.markdown("#### Ordered test plan: what the pipeline runs")
+    st.markdown("## Ordered test plan: what the pipeline runs")
     st.caption("Built by the pipeline from the stored module ranking and settings"
                + (", not from the preview above." if preview else "."))
     if tp.empty:
@@ -299,13 +313,13 @@ def main() -> None:
 
     # ---------------------------------------------------------------- evaluation panels
     off = db.latest_offline(module_model)
-    st.markdown("### Offline model evaluation")
+    st.markdown("## Offline model evaluation")
     st.info(f"These panels evaluate `{module_model}` offline on **{(off or {}).get('corpus') or 'its evaluation corpus'}**, "
             f"not on `{project}`'s builds, and do not change with the settings above.")
     e1 = st.container()  # the cost-effectiveness curve on its own full-width row (walkthrough finding)
     e2, e3 = st.columns(2)
     with e1:
-        st.markdown("#### Cost-effectiveness (offline, lines-of-code budget)")
+        st.markdown("### Cost-effectiveness (offline, lines-of-code budget)")
         if not off:
             st.info(f"No offline evaluation is stored for `{module_model}` yet.")
         else:
@@ -327,7 +341,7 @@ def main() -> None:
             st.markdown("Defect recall at the 20% budget: " + " · ".join(f"{n} {v:.1%}" for n, v in vals)
                         + f" (highest: {best[0]})")
     with e2:
-        st.markdown("#### Calibration: predicted against observed")
+        st.markdown("### Calibration: predicted against observed")
         bins = ((off or {}).get("detail") or {}).get("reliability", [])
         if not bins:
             st.info("No reliability data stored for this model version yet.")
@@ -341,7 +355,7 @@ def main() -> None:
             diag = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(color="grey").encode(x="x", y="y")
             st.altair_chart(diag + pts, width="stretch")
     with e3:
-        st.markdown("#### Risk trend over recent builds")
+        st.markdown("### Risk trend over recent builds")
         trend = db.risk_trend(project, limit=12)
         if trend.empty:
             st.info("No build with in-budget modules yet.")

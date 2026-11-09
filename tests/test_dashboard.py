@@ -56,3 +56,25 @@ def test_regions_after_login(env):
     assert at.selectbox(key=at.selectbox[-1].key).label.startswith("Explain module")  # keyboard path (R-3)
     infos = " ".join(i.value for i in at.info)
     assert "No offline evaluation is stored" in infos and "not on `o/r`'s builds" in infos  # corpus banner (O-1)
+
+
+def test_header_region_low_severity_fixes(env):
+    """Walkthrough header findings HD-4 to HD-9 (severity 1 and 2)."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    t = text(at)
+    assert at.title and all(x.value == "RiskRank: Regression-Test-Prioritisation Dashboard" for x in at.title)  # HD-6, HD-8
+    assert "highest commit-level risk" in t and "Module-level model:" in t                                  # HD-4
+    assert "Project: `o/r`" not in t and "Build run 101" not in t                                           # HD-7
+    build = next(b for b in at.selectbox if b.label == "Build")
+    assert build.value.endswith("· escalated")                                                               # HD-5
+    assert at.query_params["project"] == "o/r" and str(at.query_params["build"]).isdigit()                  # HD-9
+
+
+def test_build_choice_is_restored_from_the_address(env):
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.query_params["project"] = "o/r"
+    at.query_params["build"] = "999"            # unknown id falls back to the newest build, not an error
+    at = sign_in(at.run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    assert next(b for b in at.selectbox if b.label == "Build").value.startswith("2026-11-08")

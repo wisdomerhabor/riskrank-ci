@@ -1,0 +1,3 @@
+[client]
+# Hide the Deploy button and developer menu from end users (walkthrough HD-11)
+toolbarMode = "minimal"
