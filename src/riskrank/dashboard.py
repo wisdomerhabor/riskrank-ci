@@ -443,12 +443,25 @@ def main() -> None:
             d = pd.DataFrame([{"ordering": name, "lines inspected (%)": x * 100, "defect recall (%)": y * 100}
                               for name, pts in curves.items() for x, y in pts])
             if len(d):
+                # distinct hues, a legend that isolates a series on click (O-4), readable tooltips (O-5),
+                # axes that start at 0 (O-9) and a labelled budget line (O-8)
+                pick = alt.selection_point(fields=["ordering"], bind="legend")
                 line = alt.Chart(d).mark_line().encode(
-                    x="lines inspected (%):Q", y="defect recall (%):Q",
+                    x=alt.X("lines inspected (%):Q", scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y("defect recall (%):Q", scale=alt.Scale(domain=[0, 100])),
                     strokeDash=alt.StrokeDash("ordering:N", sort=BASELINE_ORDER),
-                    color=alt.Color("ordering:N", sort=BASELINE_ORDER))
-                rule = alt.Chart(pd.DataFrame({"x": [20]})).mark_rule(color="#b5834c").encode(x="x:Q")
-                st.altair_chart(line + rule, width="stretch")
+                    color=alt.Color("ordering:N", sort=BASELINE_ORDER, scale=alt.Scale(
+                        domain=BASELINE_ORDER, range=["#1f3a5f", "#8c8c8c", "#b5834c", "#2a9d8f", "#6a4c93"])),
+                    opacity=alt.condition(pick, alt.value(1.0), alt.value(0.15)),
+                    tooltip=[alt.Tooltip("ordering:N"), alt.Tooltip("lines inspected (%):Q", format=".1f"),
+                             alt.Tooltip("defect recall (%):Q", format=".1f")]).add_params(pick)
+                budget_line = pd.DataFrame({"x": [20], "label": ["20% budget"]})
+                rule = alt.Chart(budget_line).mark_rule(color="#b5834c").encode(
+                    x=alt.X("x:Q", title="lines inspected (%)"), tooltip=[alt.Tooltip("label:N", title="line")])
+                label = alt.Chart(budget_line).mark_text(align="left", dx=4, dy=-6, color="#b5834c").encode(
+                    x="x:Q", y=alt.value(8), text="label:N")
+                st.altair_chart(line + rule + label, width="stretch")
+                st.caption("Click a legend entry to isolate its curve; click empty space to show all.")
             vals = [("system", off["recall"])] + [(b["baseline"], b["recall"]) for b in off["baselines"]
                                                    if b["recall"] is not None]
             best = max(vals, key=lambda v: v[1])
@@ -460,25 +473,41 @@ def main() -> None:
         if not bins:
             st.info("No reliability data stored for this model version yet.")
         else:
-            st.caption(f"Brier score: {off['detail'].get('brier', float('nan')):.3f} · grey diagonal = perfect calibration")
+            det = off["detail"]
+            prev = det.get("defective", 0) / det["rows"] if det.get("rows") else None
+            st.caption(f"Brier score: {det.get('brier', float('nan')):.3f}"                                # O-6
+                       + (f" (a constant forecast of the defect rate, {prev:.1%}, scores {prev * (1 - prev):.3f}; "
+                          "lower is better)" if prev is not None else "")
+                       + " · grey diagonal = perfect calibration · numbers = modules in each bin")
             b = pd.DataFrame(bins)
+            enc = dict(x=alt.X("mean_p:Q", title="predicted risk", scale=alt.Scale(domain=[0, 1])),
+                       y=alt.Y("observed:Q", title="observed defect rate", scale=alt.Scale(domain=[0, 1])))
             pts = alt.Chart(b).mark_line(point=True).encode(
-                x=alt.X("mean_p:Q", title="predicted risk", scale=alt.Scale(domain=[0, 1])),
-                y=alt.Y("observed:Q", title="observed defect rate", scale=alt.Scale(domain=[0, 1])),
-                tooltip=["mean_p", "observed", "n"])
+                **enc, tooltip=[alt.Tooltip("mean_p:Q", title="mean predicted risk", format=".3f"),
+                                alt.Tooltip("observed:Q", title="observed defect rate", format=".3f"),
+                                alt.Tooltip("n:Q", title="modules in bin")])                                  # O-5
+            counts = alt.Chart(b).mark_text(dy=-10, fontSize=11).encode(**enc, text="n:Q")                   # O-6
             diag = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(color="grey").encode(x="x", y="y")
-            st.altair_chart(diag + pts, width="stretch")
+            st.altair_chart(diag + pts + counts, width="stretch")
     with e3:
         st.markdown("### Risk trend over recent builds")
         trend = db.risk_trend(project, limit=12)
         if trend.empty:
             st.info("No build with in-budget modules yet.")
         else:
-            st.caption(f"Average risk of in-budget modules, last {len(trend)} builds with a ranking")
-            trend["build"] = trend["created"].astype(str).str[:16] + " " + trend["commit_after"].str[:7]
-            st.altair_chart(alt.Chart(trend).mark_line(point=True).encode(
-                x=alt.X("build:N", sort=None, axis=alt.Axis(labels=False)), y=alt.Y("mean_in_budget_risk:Q", title="average risk"),
-                tooltip=["build", "mean_in_budget_risk", "in_budget_modules"]), width="stretch")
+            trend["build"] = trend["created"].astype(str).str[:16].str.replace("T", " ") + " " \
+                + trend["commit_after"].str[:7]
+            trend["selected"] = trend["id"] == run_id
+            st.caption(f"Average risk of in-budget modules, last {len(trend)} builds with a ranking"
+                       + ("; the selected build is the larger dark point." if trend["selected"].any()
+                          else "; the selected build ranked no module or is older than these."))           # O-7
+            st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)                      # O-10
+            x = alt.X("build:N", sort=None, title=None, axis=alt.Axis(labelAngle=-45, labelLimit=140))      # O-7
+            tips = [alt.Tooltip("build:N"), alt.Tooltip("mean_in_budget_risk:Q", title="average risk", format=".3f"),
+                    alt.Tooltip("in_budget_modules:Q", title="in-budget modules")]                            # O-5
+            base = alt.Chart(trend).encode(x=x, y=alt.Y("mean_in_budget_risk:Q", title="average risk"), tooltip=tips)
+            here = base.transform_filter("datum.selected").mark_point(size=160, filled=True, color="#1f3a5f")
+            st.altair_chart(base.mark_line(point=True, color="#8c8c8c") + here, width="stretch")
 
 
 if __name__ == "__main__":  # `streamlit run` executes the file as __main__; importing it does not

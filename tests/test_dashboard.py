@@ -158,3 +158,25 @@ def test_commit_view_low_severity_fixes(env):
     next(n for n in at.number_input if n.label == "Risk threshold").set_value(0.2)
     at = at.run()
     assert "the flagged column uses threshold 0.20" in " ".join(i.value for i in at.info)              # C-4
+
+
+def test_offline_panels_low_severity_fixes(env, monkeypatch):
+    """Walkthrough offline-panel findings O-4 to O-10 (severity 1 and 2); O-3 was fixed in 3b2babb."""
+    import os
+    s = Store(os.environ["RISKRANK_DB"])
+    s.put_offline_run(project="pallets/flask", corpus_name="mined Flask", corpus_projects=["pallets/flask"],
+                      model="m1", created="2026-11-08T09:00:00Z", budget_unit="lines", budget=20.0,
+                      ranking_key="default", recall=0.4,
+                      baselines=[{"baseline": "random", "recall": 0.2}, {"baseline": "largest-first", "recall": 0.3}],
+                      detail={"curves": {"system": [[0, 0], [0.2, 0.4], [1, 1]], "random": [[0, 0], [1, 1]]},
+                              "reliability": [{"mean_p": 0.1, "observed": 0.12, "n": 40},
+                                              {"mean_p": 0.3, "observed": 0.25, "n": 3}],
+                              "brier": 0.057, "rows": 100, "defective": 7},
+                      build_ref="offline-m1")
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    t = text(at)
+    assert "a constant forecast of the defect rate, 7.0%, scores 0.065" in t                           # O-6
+    assert "numbers = modules in each bin" in t
+    assert "Click a legend entry to isolate its curve" in t                                            # O-4
+    assert "the selected build is the larger dark point" in t                                          # O-7
