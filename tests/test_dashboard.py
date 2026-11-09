@@ -208,3 +208,14 @@ def test_coverage_map_age_carries_a_date(env):
     assert not at.exception, at.exception
     assert at.metric[2].value == "4 commits ago, committed 8 Nov 2026, 10:00 WAT"
     assert "(4 commits ago, committed 8 Nov 2026, 10:00 WAT)" in text(at)
+
+
+def test_dropdown_still_chooses_the_explained_module(env):
+    """The keyboard path (R-3) keeps working now that a ticked row also drives the explanation."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    pick = next(b for b in at.selectbox if b.label.startswith("Explain module"))
+    pick.select(pick.options[1])
+    at = at.run()
+    assert not at.exception, at.exception
+    t = text(at)
+    assert ">src/y.py</code>" in t and "No row selected" not in t

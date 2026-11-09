@@ -381,12 +381,20 @@ def main() -> None:
                                                                   "# is always the rank (R-10, R-6)"):
                             st.session_state["rank-order"] = order + 1
                             st.rerun()
-                        clicked = ev.selection.rows[0] if ev.selection.rows else 0
-                        if not ev.selection.rows:
-                            st.caption("No row selected: the explanation shows rank 1 by default.")              # R-6
                         names = [f"{int(n)}. {m}" for n, m in zip(r["#"], r["id"])]
+                        # the ticked row and the dropdown stay in step: ticking a row explains that row, and the
+                        # dropdown (the keyboard path, R-3) can still choose any module (feedback 9 Nov)
+                        pick_key = f"explain-{run_id}-{key}-{unit}"
+                        row_now = ev.selection.rows[0] if ev.selection.rows else None
+                        if row_now is not None and row_now != st.session_state.get(pick_key + "-row"):
+                            st.session_state[pick_key] = names[row_now]
+                        st.session_state[pick_key + "-row"] = row_now
+                        if st.session_state.get(pick_key) not in names:
+                            st.session_state[pick_key] = names[0]
                         sel = names.index(st.selectbox("Explain module (keyboard: Tab here, then arrow keys)", names,
-                                                       index=clicked, key=f"explain-{run_id}-{key}-{unit}"))
+                                                       key=pick_key))
+                        if row_now is None and sel == 0:
+                            st.caption("No row selected: the explanation shows rank 1 by default.")              # R-6
                         st.caption(f"Shaded rows = inside the budget. Flagged = calibrated risk above the {threshold:.2f} threshold"
                                    + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else ".")
                                    + " Select a row to see its reasons.")
