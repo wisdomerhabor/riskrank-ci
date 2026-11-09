@@ -141,3 +141,20 @@ def test_test_plan_low_severity_fixes(env):
     assert "None" not in ranked.astype(str).to_numpy()                                                  # T-5
     assert list(ranked.columns[:2]) == ["#", "in budget"]                                               # T-6
     assert "of the 3 tests, 1 is unranked" in t and "excluded for zero size" not in t                  # T-4, T-10
+
+
+def test_commit_view_low_severity_fixes(env):
+    """Walkthrough commit-view findings C-4 to C-9 (severity 1 and 2); C-7 is covered by E-2's short names,
+    C-8 was fixed in 3b2babb."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    at.selectbox(key="granularity").select("commits")
+    at = at.run()
+    assert not at.exception, at.exception
+    t = text(at)
+    assert "risk **0.6000**" in t                                                                      # C-5
+    assert "Showing the top" in t and "five largest per commit" in t                                   # C-9
+    table = next(d.value for d in at.dataframe if "commit" in d.value.columns)
+    assert table["scored in build at"].str.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d$").all()                 # C-6
+    next(n for n in at.number_input if n.label == "Risk threshold").set_value(0.2)
+    at = at.run()
+    assert "the flagged column uses threshold 0.20" in " ".join(i.value for i in at.info)              # C-4

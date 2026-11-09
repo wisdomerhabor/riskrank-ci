@@ -124,21 +124,25 @@ def reason_chart(codes: list[dict], domain: list[float] | None = None) -> alt.Ch
 
 
 def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dict], model: dict | None,
-                      raw: float | None = None, domain: list[float] | None = None, default: bool = False) -> None:
+                      raw: float | None = None, domain: list[float] | None = None, default: bool = False,
+                      digits: int = 2, top_only: bool = False) -> None:
     st.markdown("## Why this risk score?")
     # a long path wraps instead of breaking mid-word or overflowing; copying it gives the plain path (E-8)
     shown = f'<code style="white-space: normal; overflow-wrap: anywhere">{html.escape(title)}</code>'
-    st.markdown(f"Selected: {shown} · risk **{p:.2f}**" + (f" · rank {rank_no}" if rank_no else "")
+    st.markdown(f"Selected: {shown} · risk **{p:.{digits}f}**" + (f" · rank {rank_no}" if rank_no else "")
                 + (" (shown by default; select a row to change)" if default else ""),                  # E-6
                 unsafe_allow_html=True)
     if not codes:
         st.info("No reason codes stored for this score.")
         return
     st.altair_chart(reason_chart(codes, domain), width="stretch")
+    if top_only:                                                                                        # C-9
+        st.caption(f"Showing the top {len(codes)} features by size of contribution (the pipeline keeps the five "
+                   "largest per commit), so the features listed differ between commits.")
     st.caption("Bars show feature contributions to the model's **uncalibrated** score: dark blue raises risk, "
                "tan lowers it. They show what the model associates with risk, not what causes defects.")  # E-7
     record = (model or {}).get("record") or {}
-    if raw is not None and not pd.isna(raw):                                                          # E-4
+    if raw is not None and not pd.isna(raw) and not top_only:                                         # E-4
         total = sum(c["contribution"] for c in codes)
         scale = (record.get("explanation") or {}).get("scale", "raw")
         st.caption(f"Baseline {raw - total:+.3f} + contributions {total:+.3f} = uncalibrated score {raw:.3f}"
@@ -233,6 +237,9 @@ def main() -> None:
                                                  stored["risk_threshold"])
     if commit_view:
         st.caption("Budget controls apply to module plans only; the commit view shows stored historical commit scores.")
+        if threshold != stored["risk_threshold"]:                                                       # C-4
+            st.info(f"**Preview**: the flagged column uses threshold {threshold:.2f}. The pipeline's escalation "
+                    f"used {stored['risk_threshold']:.2f} from `riskrank.yml`.")
     elif preview:
         st.info("**Preview**: the ranking below uses these settings on the stored scores. The pipeline still uses "
                 "the repository's settings file; edit `riskrank.yml` to apply them.")
@@ -258,12 +265,13 @@ def main() -> None:
                     view = shown.assign(commit=shown["commit"].str[:10], risk=shown["p"].map(lambda v: f"{v:.4f}"),
                                         flagged=shown["p"] > threshold,
                                         features_outside_training_range=~shown["in_training_range"].astype(bool))
+                    view["created"] = pd.to_datetime(view["created"], utc=True).dt.strftime("%Y-%m-%d %H:%M")  # C-6
                     ev = st.dataframe(view[["commit", "risk", "flagged", "features_outside_training_range", "created",
                                             "model_version"]].rename(columns={
                                                 "created": "scored in build at", "model_version": "model",
                                                 "features_outside_training_range": "features outside training range"}),
                                       on_select="rerun", selection_mode="single-row", hide_index=True, width="stretch",
-                                      key="commits")
+                                      key="commits", column_config={"model": st.column_config.TextColumn(width="medium")})
                     sel = ev.selection.rows[0] if ev.selection.rows else 0
                 st.caption("Two different checks: the model was trained on another corpus (Java, ApacheJIT), and, "
                            "separately, a commit's features may fall outside the range seen in training. Escalation "
@@ -273,7 +281,7 @@ def main() -> None:
                 r = shown.iloc[sel]
                 explanation_panel(r["commit"][:10], r["p"], None, r["reason_codes"] or [], db.model(r["model_version"]),
                                   raw=r.get("raw"), domain=contribution_domain(shown["reason_codes"]),
-                                  default=not ev.selection.rows)
+                                  default=not ev.selection.rows, digits=4, top_only=True)
     else:
         if len(ranking):
             r = rank(ranking.rename(columns={"module": "id"}), key)
