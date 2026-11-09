@@ -51,7 +51,8 @@ EXCLUSIONS = ["build_failure", "suite_fails_at_parent", "not_exactly_one_test_ad
               "backport_error_or_not_applicable", "backport_passes_all_three", "flaky"]
 ASSERTION = {"AssertionError", "Failed"}
 TIMEOUT = 1800
-BUILD_TOOLS_DATE = "2026-11-09"  # the project's editable build backend only (setuptools, wheel); see build_env
+BUILD_TOOLS_DATE = "2026-11-09"
+MIN_BUILD_SETUPTOOLS_DATE = "2019-02-28"  # uv needs setuptools >= 40.8 (5 Feb 2019) to build a setup.py project  # the project's editable build backend only (setuptools, wheel); see build_env
 
 PROJECT = "flask"  # the distribution re-installed editable (Flask has kept this name throughout)
 
@@ -241,6 +242,9 @@ def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
     if r.returncode:
         return False, f"python {py} unavailable: {r.stderr.strip()[-300:]}"
     vpy = os.path.join(venv, "bin", "python")
+    # uv byte-compiles through py_compile.PycInvalidationMode, which Python 3.6 lacks: there the environment is
+    # compiled with the standard library's compileall once everything is installed (the same effect, as pip did).
+    compile_flag = [] if py == "3.6" else ["--compile-bytecode"]
     if os.path.exists(os.path.join(wt, "requirements", "tests.txt")):
         deps, source = ["-r", "requirements/tests.txt"], "requirements/tests.txt"
     elif has_group(os.path.join(wt, "pyproject.toml"), "tests"):
@@ -258,16 +262,32 @@ def build_env(wt: str, date: str, venv: str) -> tuple[bool, str]:
     pinned = [f"git+https://github.com/{r}@{sha_at(r, br, date)}" for r, br in tox_archives(os.path.join(wt, "tox.ini"))]
     if pinned:
         source += " + " + ", ".join(p.split("/")[-1] for p in pinned)
-    r = sh(["uv", "pip", "install", "-q", "--compile-bytecode", "--python", vpy, "--exclude-newer", date, ".",
-            "setuptools", *deps, *pinned], cwd=wt)
+    # uv builds a project that has no pyproject.toml with setuptools 40.8 or later (5 Feb 2019), so for an older
+    # anchor the build backend is dated 28 Feb 2019 instead: still old enough for 2017-era setup.py files (MarkupSafe
+    # 1.0 imports setuptools.Feature, removed in Jan 2020). For an anchor after that date this is the anchor's own
+    # date, i.e. no change. setuptools in the environment itself is then re-installed at the anchor's date, so
+    # nothing the tests can import is newer (second amendment, 9 Nov 2026).
+    floor = max(pd.Timestamp(date).tz_convert("UTC"), pd.Timestamp(MIN_BUILD_SETUPTOOLS_DATE, tz="UTC")).isoformat()
+    build = [f"--exclude-newer-package={p}={floor}" for p in ("setuptools", "wheel")]
+    r = sh(["uv", "pip", "install", "-q", *compile_flag, "--python", vpy, "--exclude-newer", date, *build, ".",
+            *deps, *pinned], cwd=wt)
     if r.returncode:
         return False, f"{source}: {r.stderr.strip()[-400:]}"
-    newer = [f"--exclude-newer-package={p}={BUILD_TOOLS_DATE}" for p in ("setuptools", "wheel")]
-    r = sh(["uv", "pip", "install", "-q", "--compile-bytecode", "--python", vpy, "--exclude-newer", date, *newer, "--no-deps",
+    r = sh(["uv", "pip", "install", "-q", *compile_flag, "--python", vpy, "--exclude-newer", date,
+            "--reinstall-package", "setuptools", "setuptools"], cwd=wt)
+    if r.returncode:
+        return False, f"dated setuptools: {r.stderr.strip()[-400:]}"
+    newer = [f"--exclude-newer-package={p}={BUILD_TOOLS_DATE}" for p in ("setuptools", "wheel")]  # editable step
+    r = sh(["uv", "pip", "install", "-q", *compile_flag, "--python", vpy, "--exclude-newer", date, *newer, "--no-deps",
             "--reinstall-package", PROJECT, "-e", "."], cwd=wt)
     if r.returncode:
         return False, f"editable install: {r.stderr.strip()[-400:]}"
-    r = sh(["uv", "pip", "install", "-q", "--python", vpy, "coverage"], cwd=wt)  # measurement tool, undated
+    if not compile_flag:
+        site = sh([vpy, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"]).stdout.strip()
+        sh([vpy, "-m", "compileall", "-q", site])
+    # measurement tool, undated (pre-registered): the newest coverage.py supporting this Python, upgrading any older
+    # copy the dated test requirements brought in (pytest-cov pulls coverage 4.x into 2017-2019 environments)
+    r = sh(["uv", "pip", "install", "-q", "--python", vpy, "--upgrade-package", "coverage", "coverage"], cwd=wt)
     if r.returncode:
         return False, f"coverage: {r.stderr.strip()[-300:]}"
     return True, f"python {py}; {source}"
@@ -431,9 +451,12 @@ def phase_rank() -> None:
         wt, venv = os.path.join(WORK, f"wt-{fix[:10]}"), os.path.join(WORK, f"venv-{fix[:10]}")
         tmp = os.path.join(WORK, f"res-{fix[:10]}")
         covfile, mapfile = os.path.join(tmp, ".coverage"), os.path.join(tmp, "map.json")
-        pytest(venv, wt, ["tests"], os.path.join(tmp, "cov.json"), coverage_file=covfile)
-        sh([os.path.join(venv, "bin", "python"), os.path.join(TOOLS, "map_from_coverage.py"), covfile, wt, mapfile,
-            ",".join(cfg["source_modules"]), ",".join(cfg["exclude_paths"])])
+        rc, _ = pytest(venv, wt, ["tests"], os.path.join(tmp, "cov.json"), coverage_file=covfile)
+        m = sh([os.path.join(venv, "bin", "python"), os.path.join(TOOLS, "map_from_coverage.py"), covfile, wt, mapfile,
+                ",".join(cfg["source_modules"]), ",".join(cfg["exclude_paths"])])
+        if m.returncode or not os.path.exists(mapfile):
+            raise RuntimeError(f"{fix[:8]}: coverage map not built (pytest exit {rc}, coverage file "
+                               f"{'present' if os.path.exists(covfile) else 'missing'}): {(m.stderr or '')[-600:]}")
         coverage = {t: set(m) for t, m in json.load(open(mapfile)).items()}
         modules = [p for p in git("ls-tree", "-r", "--name-only", anchor).splitlines() if is_source(p, cfg)]
         feats = module_features(REPO, anchor, modules, months, keywords).dropna(subset=["size"])
