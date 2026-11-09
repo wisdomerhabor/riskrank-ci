@@ -148,6 +148,16 @@ def status_css(v) -> str:
     return STATUS_CSS.get(v, "")
 
 
+def share_rule(r: pd.DataFrame, unit: str, over: bool) -> str:
+    """How the realised share is worked out, with its numbers (R-1, student's retest wording, 9 Nov)."""
+    inb = r["in_budget"].astype(bool)
+    if unit == "lines":
+        rule = f"In-Budget LOC ÷ Total LOC = {int(r.loc[inb, 'size'].sum()):,} ÷ {int(r['size'].sum()):,}"
+    else:
+        rule = f"in-budget modules ÷ changed modules = {int(inb.sum())} ÷ {len(r)}"
+    return "(" + rule + ("; the boundary module is included whole, so this can exceed the budget" if over else "") + ")"
+
+
 def plural(n: int, word: str) -> str:
     """'1 module', '2 modules', '0 modules'."""
     return f"{n} {word}{'' if n == 1 else 's'}"
@@ -425,9 +435,8 @@ def main() -> None:
                     facts([("Touched", f"**{touched}** module{'' if touched == 1 else 's'}"),
                            ("Budget", f"**{budget:g}%** {'of changed lines' if unit == 'lines' else 'of changed modules'}"
                                       + ", " + covering(k, last_in)),
-                           ("Realised share", None if share is None else f"**{share:.1%}**"
-                            + (" (the boundary module is included whole, so this can exceed the budget)"
-                               if over else "")),
+                           ("Realised share", None if share is None else f"**{share:.1%}** "
+                            + share_rule(r, unit, over)),                                              # R-1 retest
                            ("Flagged", None if not len(r) else                                                    # S-5
                             f"**{int(r['flagged'].sum())}** of {len(r)} module{'' if len(r) == 1 else 's'} above "
                             f"the {threshold:.2f} threshold")])

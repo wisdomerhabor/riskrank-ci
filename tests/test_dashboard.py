@@ -255,3 +255,12 @@ def test_visible_text_carries_no_finding_ids_or_module_s():
     assert "module(s)" not in src and "trailing block" not in code
     from riskrank.dashboard import plural
     assert (plural(1, "module"), plural(0, "module"), plural(3, "module")) == ("1 module", "0 modules", "3 modules")
+
+
+def test_realised_share_states_its_rule_and_numbers():
+    import pandas as pd
+    from riskrank.dashboard import share_rule
+    r = pd.DataFrame({"in_budget": [True, False, False, False], "size": [172.0, 85.0, 79.0, 56.0]})
+    assert share_rule(r, "lines", True) == ("(In-Budget LOC ÷ Total LOC = 172 ÷ 392; the boundary module is included "
+                                            "whole, so this can exceed the budget)")
+    assert share_rule(r, "artefacts", False) == "(in-budget modules ÷ changed modules = 1 ÷ 4)"
