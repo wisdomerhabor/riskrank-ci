@@ -380,22 +380,42 @@ def main() -> None:
         age = stats.get("commits_since_map")
         if age is not None and age >= 10:
             st.warning(f"The coverage map is {age} commits old: tests for code added since then are not mapped.")
-        styled = (tp[["position", "test", "deciding_module", "from rank", "in_budget"]]
-                  .rename(columns={"position": "#", "deciding_module": "module that sets its rank",
-                                   "in_budget": "in budget"})
-                  .style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] else ""
-                                            for _ in row], axis=1))
-        st.dataframe(styled, hide_index=True, width="stretch", height=300)
+        # ranked and unranked tests apart (T-4); no "None" cells (T-5); status pinned on the left (T-6);
+        # tables sized to their rows so the page, not the table, scrolls (T-7); wide test column (T-8)
+        fit = lambda n: 35 * (n + 1) + 3
+        cfg = {"#": st.column_config.NumberColumn(pinned=True, width="small"),
+               "in budget": st.column_config.TextColumn(pinned=True, width="small"),
+               "test": st.column_config.TextColumn(width="large")}
+        ranked_tp = tp[tp["group"] == "ranked"]
+        rest = tp[tp["group"] != "ranked"]
+        if len(ranked_tp):
+            show = pd.DataFrame({"#": ranked_tp["position"],
+                                 "in budget": ["✓ in budget" if b else "–" for b in ranked_tp["in_budget"]],
+                                 "test": ranked_tp["test"],
+                                 "module that sets its rank": ranked_tp["deciding_module"].fillna("—"),
+                                 "from rank": ranked_tp["from rank"].map(lambda v: "—" if pd.isna(v) else int(v))})
+            styled = show.style.apply(lambda row: ["background-color: rgba(31,58,95,0.10)" if row["in budget"] != "–"
+                                                   else "" for _ in row], axis=1)
+            st.markdown(f"**Ranked tests ({len(ranked_tp)})**, ordered by the rank of the modules they exercise")
+            st.dataframe(styled, hide_index=True, width="stretch", height=fit(len(show)), column_config=cfg)
+        if len(rest):
+            why = {"no_ranked_module": "exercises no changed module", "no_coverage_record": "no coverage record",
+                   "zero_size_only": "exercises only empty files", "default order": "default order"}
+            with st.expander(f"Unranked tests ({len(rest)}): run after the ranked tests, in test-name order"):
+                st.dataframe(pd.DataFrame({"#": rest["position"], "in budget": "–", "test": rest["test"],
+                                           "why unranked": rest["group"].map(lambda g: why.get(g, g))}),
+                             hide_index=True, width="stretch", height=fit(len(rest)), column_config=cfg)
         trailing = stats.get("trailing", {})
         missing = stats.get("ranked_modules_missing_from_map", [])
+        zero = trailing.get("zero_size_only", 0)
         st.markdown(
             f"Coverage map at commit `{str(run.get('coverage_map_commit') or 'unknown')[:7]}`"
             + (f" ({stats['commits_since_map']} commits ago)" if stats.get("commits_since_map") is not None else "")
-            + f" · **{len(missing)}** ranked module(s) not in the map"
+            + f" · **{len(missing)}** ranked module{'' if len(missing) == 1 else 's'} not in the map"       # T-9
             + (f" ({', '.join(missing)})" if missing else "")
-            + f" · unranked tests: {trailing.get('no_ranked_module', 0)} exercise no ranked module, "
-            f"{trailing.get('no_coverage_record', 0)} have no coverage record, "
-            f"{trailing.get('zero_size_only', 0)} excluded for zero size")
+            + f" · of the {len(tp)} tests, {len(rest)} {'is' if len(rest) == 1 else 'are'} unranked: {trailing.get('no_ranked_module', 0)} exercise "
+            f"no changed module, {trailing.get('no_coverage_record', 0)} have no coverage record"
+            + (f", {zero} exercise only empty files, which are not ranked" if zero else ""))              # T-10
 
     # ---------------------------------------------------------------- evaluation panels
     off = db.latest_offline(module_model)

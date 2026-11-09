@@ -52,7 +52,7 @@ def test_regions_after_login(env):
     assert "threshold 0.50" in t and "decided by the pipeline" in t           # unrounded value vs threshold (HD-1/2)
     assert "Why this risk score?" in t and "Selected: <code" in t and ">src/x.py</code>" in t       # reasons beside the ranking
     assert "tests that exercise them: **1** of 3 (33.3% of the suite)" in t   # budget's own unit first (T-3)
-    assert "commit `cm1`" in t and "**1** ranked module(s) not in the map" in t
+    assert "commit `cm1`" in t and "**1** ranked module not in the map" in t
     assert at.selectbox(key=at.selectbox[-1].key).label.startswith("Explain module")  # keyboard path (R-3)
     infos = " ".join(i.value for i in at.info)
     assert "No offline evaluation is stored" in infos and "not on `o/r`'s builds" in infos  # corpus banner (O-1)
@@ -128,3 +128,16 @@ def test_explanation_panel_low_severity_fixes(env):
     assert "dark blue raises risk, tan lowers it" in t                                                # E-7
     assert "= uncalibrated score 0.900" in t and "calibration maps it to the risk 0.70" in t          # E-4
     assert "Attribution: linear (exact): for a linear model" in t                                     # E-9
+
+
+def test_test_plan_low_severity_fixes(env):
+    """Walkthrough ordered-test-plan findings T-4 to T-10 (severity 1 and 2)."""
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    t = text(at)
+    assert "**Ranked tests (2)**" in t and any(e.label.startswith("Unranked tests (1)") for e in at.expander)  # T-4
+    tables = [d.value for d in at.dataframe]
+    ranked = next(d for d in tables if "module that sets its rank" in d.columns)
+    assert "None" not in ranked.astype(str).to_numpy()                                                  # T-5
+    assert list(ranked.columns[:2]) == ["#", "in budget"]                                               # T-6
+    assert "of the 3 tests, 1 is unranked" in t and "excluded for zero size" not in t                  # T-4, T-10
