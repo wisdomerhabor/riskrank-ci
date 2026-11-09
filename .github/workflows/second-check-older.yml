@@ -27,11 +27,11 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.6", "3.7"]
-    container: python:${{ matrix.python }}-slim
+    container: python:${{ matrix.python }}   # the full image: git and curl included (Debian 11 apt mirrors 404)
     steps:
-      - name: Tools (git, curl, uv 0.13.7)
+      - name: Tools (uv 0.13.7; git and curl come with the image)
         run: |
-          apt-get update -qq && apt-get install -y -qq git curl ca-certificates > /dev/null
+          git --version
           curl -LsSf https://astral.sh/uv/0.13.7/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
           uv --version && python${{ matrix.python }} -V
       - uses: actions/checkout@v4
