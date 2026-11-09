@@ -495,7 +495,7 @@ def main() -> None:
             stats = (run.get("detail") or {}).get("stats") or {}
             st.markdown("## Ordered test plan: what the pipeline runs")
             st.caption("Built by the pipeline from the stored module ranking and settings"
-                       + (", not from the preview above." if preview else "."))
+                       + (", not from the settings preview on the **This build: ranked changes** tab." if preview else "."))
             if tp.empty:
                 st.info("No test plan stored for this build.")
             else:
@@ -562,7 +562,7 @@ def main() -> None:
             off = db.latest_offline(module_model)
             st.markdown("## Offline model evaluation")
             st.info(f"These panels evaluate `{module_model}` offline on **{(off or {}).get('corpus') or 'its evaluation corpus'}**, "
-                    f"not on `{project}`'s builds, and do not change with the settings above.")
+                    f"not on `{project}`'s builds, and do not change with the settings on the **This build: ranked changes** tab.")
             e1 = st.container()  # the cost-effectiveness curve on its own full-width row (walkthrough finding)
             e2, e3 = st.columns(2)
             with e1:
@@ -572,7 +572,7 @@ def main() -> None:
                 else:
                     facts([("Model", f"`{module_model}`"), ("Corpus", off["corpus"]),
                            ("Evaluated", str(off["created"])[:10]),
-                           ("Ranking key", "default, independent of the settings above")])
+                           ("Ranking key", "default, independent of the settings on the **This build: ranked changes** tab")])
                     curves = (off.get("detail") or {}).get("curves", {})
                     d = pd.DataFrame([{"ordering": name, "lines inspected (%)": x * 100, "defect recall (%)": y * 100}
                                       for name, pts in curves.items() for x, y in pts])

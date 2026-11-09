@@ -237,3 +237,10 @@ def test_budget_coverage_names_the_module_count_and_the_ranks():
     assert covering(0, 0) == "covering no module"
     assert covering(1, 1) == "covering 1 module (rank 1)"
     assert covering(4, 4) == "covering 4 modules (ranks 1–4)"
+
+
+def test_no_tab_points_at_settings_above():
+    """The settings sit on the first tab, so the other tabs name it rather than saying 'above'."""
+    import pathlib
+    src = pathlib.Path(__file__).parents[1].joinpath("src/riskrank/dashboard.py").read_text()
+    assert "settings above" not in src and "preview above" not in src
