@@ -285,7 +285,7 @@ class Store:
 
     def commit_scores(self, project: str) -> pd.DataFrame:
         """Stored historical commit scores (the commit view shows these, never a live ranking)."""
-        q = (select(artefact.c.name.label("commit"), prediction.c.p, prediction.c.model_version,
+        q = (select(artefact.c.name.label("commit"), prediction.c.p, prediction.c.raw, prediction.c.model_version,
                     prediction.c.in_training_range, prediction.c.reason_codes, prioritisation_run.c.created,
                     prioritisation_run.c.build_ref)
              .select_from(prediction.join(artefact).join(prioritisation_run))
@@ -293,7 +293,7 @@ class Store:
              .order_by(prioritisation_run.c.created.desc()))
         with self.engine.connect() as c:
             return pd.DataFrame(c.execute(q).mappings().all(),
-                                columns=["commit", "p", "model_version", "in_training_range", "reason_codes",
+                                columns=["commit", "p", "raw", "model_version", "in_training_range", "reason_codes",
                                          "created", "build_ref"])
 
     def test_plan(self, run_id: int) -> pd.DataFrame:

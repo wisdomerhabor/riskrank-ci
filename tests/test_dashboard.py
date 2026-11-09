@@ -50,7 +50,7 @@ def test_regions_after_login(env):
     warnings = " ".join(w.value for w in at.warning)
     assert "Scores transferred:" in warnings                                  # a banner, not body text (HD-3)
     assert "threshold 0.50" in t and "decided by the pipeline" in t           # unrounded value vs threshold (HD-1/2)
-    assert "Why this risk score?" in t and "Selected: `src/x.py`" in t       # reasons beside the ranking
+    assert "Why this risk score?" in t and "Selected: <code" in t and ">src/x.py</code>" in t       # reasons beside the ranking
     assert "tests that exercise them: **1** of 3 (33.3% of the suite)" in t   # budget's own unit first (T-3)
     assert "commit `cm1`" in t and "**1** ranked module(s) not in the map" in t
     assert at.selectbox(key=at.selectbox[-1].key).label.startswith("Explain module")  # keyboard path (R-3)
@@ -113,3 +113,18 @@ def test_ranked_plan_low_severity_fixes(env):
     assert any(b.label == "Reset to rank order" for b in at.button)                                      # R-10
     next(b for b in at.button if b.label == "Reset to rank order").click()
     assert not at.run().exception
+
+
+def test_explanation_panel_low_severity_fixes(env):
+    """Walkthrough explanation-panel findings E-2 to E-9 (severity 1 and 2)."""
+    from riskrank.dashboard import contribution_domain, reading
+    assert reading("prior_fixes", 0.0, "lowered") == "no prior fixes (0) lowers risk"                    # E-5
+    assert reading("size", 120.0, "raised") == "lines of code = 120 raises risk"
+    assert contribution_domain([[{"contribution": 0.5}], [{"contribution": -1.0}]]) == [-1.05, 1.05]     # E-3
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    t = text(at)
+    assert "(shown by default; select a row to change)" in t                                          # E-6
+    assert "dark blue raises risk, tan lowers it" in t                                                # E-7
+    assert "= uncalibrated score 0.900" in t and "calibration maps it to the risk 0.70" in t          # E-4
+    assert "Attribution: linear (exact): for a linear model" in t                                     # E-9

@@ -11,6 +11,7 @@ the plan the pipeline built, because the store holds no coverage map to rebuild 
 
 from __future__ import annotations
 
+import html
 import os
 
 import altair as alt
@@ -21,13 +22,22 @@ from riskrank import auth
 from riskrank.budget import Z, mark, rank, realised_share
 from riskrank.store import Store
 
+# short axis labels, full names in the tooltip (walkthrough E-2)
 FEATURE_LABELS = {
-    "size": "lines of code", "complexity": "cyclomatic complexity", "churn": "code churn in this module",
-    "changes": "number of changes to this module", "prior_fixes": "prior fix history of this module",
-    "la": "lines added", "ld": "lines deleted", "nf": "files touched", "ns": "subsystems touched",
-    "nd": "directories touched", "ent": "change entropy", "ndev": "developers on the touched files",
-    "age": "time since the files last changed", "nuc": "unique changes to the files",
-    "aexp": "author experience", "arexp": "author recent experience", "asexp": "author subsystem experience",
+    "size": ("lines of code", "lines of code"), "complexity": ("complexity", "cyclomatic complexity"),
+    "churn": ("churn", "code churn in this module"), "changes": ("changes", "number of changes to this module"),
+    "prior_fixes": ("prior fixes", "prior fix history of this module"),
+    "la": ("lines added", "lines added"), "ld": ("lines deleted", "lines deleted"), "nf": ("files", "files touched"),
+    "ns": ("subsystems", "subsystems touched"), "nd": ("directories", "directories touched"),
+    "ent": ("entropy", "change entropy"), "ndev": ("developers", "developers on the touched files"),
+    "age": ("file age", "time since the files last changed"), "nuc": ("unique changes", "unique changes to the files"),
+    "aexp": ("author exp.", "author experience"), "arexp": ("recent exp.", "author recent experience"),
+    "asexp": ("subsystem exp.", "author subsystem experience"),
+}
+ATTRIBUTION_NOTES = {  # one plain-language line per method (E-9)
+    "linear": "for a linear model each bar is the feature's weight times its distance from the average module",
+    "tree shap": "Tree SHAP shares the score exactly among the features, measured against average background data",
+    "kernel": "Kernel SHAP estimates each feature's share by sampling, so the bars are approximate",
 }
 BASELINE_ORDER = ["system", "random", "largest-first", "smallest-first", "recency-based"]
 PRODUCT = "RiskRank: Regression-Test-Prioritisation Dashboard"  # one name on the tab, the login page and the heading (walkthrough HD-6)
@@ -83,32 +93,60 @@ def build_label(r) -> str:
             + (f" · {', '.join(marks)}" if marks else ""))
 
 
-def reason_chart(codes: list[dict]) -> alt.Chart:
+def reading(feature: str, value: float, direction: str) -> str:
+    """The tooltip sentence: a zero count reads as 'no prior fixes', not as 'fixes lower risk' (E-5)."""
+    short = FEATURE_LABELS.get(feature, (feature, feature))[0]
+    effect = {"raised": "raises risk", "lowered": "lowers risk"}.get(direction, "no effect")
+    if value == 0 and feature in ("prior_fixes", "changes", "churn", "ndev", "nuc"):
+        return f"no {short} (0) {effect}"
+    return f"{short} = {value:g} {effect}"
+
+
+def contribution_domain(code_lists) -> list[float]:
+    """One x-axis for every score in view, so bars compare across rows (E-3)."""
+    m = max((abs(c["contribution"]) for codes in code_lists for c in (codes or [])), default=1.0) or 1.0
+    return [-m * 1.05, m * 1.05]
+
+
+def reason_chart(codes: list[dict], domain: list[float] | None = None) -> alt.Chart:
     d = pd.DataFrame(codes)
-    d["feature"] = d["feature"].map(lambda f: FEATURE_LABELS.get(f, f))
+    d["reading"] = [reading(f, v, r) for f, v, r in zip(d["feature"], d["value"], d["direction"])]
+    d["full name"] = d["feature"].map(lambda f: FEATURE_LABELS.get(f, (f, f))[1])
+    d["feature"] = d["feature"].map(lambda f: FEATURE_LABELS.get(f, (f, f))[0])
     d["effect"] = d["direction"].map({"raised": "raises risk", "lowered": "lowers risk"})
+    x = alt.X("contribution:Q", title="contribution to the uncalibrated score",
+              scale=alt.Scale(domain=domain) if domain else alt.Undefined)
     return alt.Chart(d).mark_bar().encode(
-        x=alt.X("contribution:Q", title="contribution to the uncalibrated score"),
-        y=alt.Y("feature:N", sort=None, title=None, axis=alt.Axis(labelLimit=320, labelOverlap=False)),
+        x=x, y=alt.Y("feature:N", sort=None, title=None, axis=alt.Axis(labelLimit=200, labelOverlap=False)),
         color=alt.Color("effect:N", scale=alt.Scale(domain=["raises risk", "lowers risk"],
                                                     range=["#1f3a5f", "#b5834c"]), legend=None),
-        tooltip=["feature", "value", "contribution", "effect"]).properties(height=44 * len(d) + 30)
+        tooltip=["reading", "full name", "contribution"]).properties(height=44 * len(d) + 30)
 
 
-def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dict], model: dict | None) -> None:
+def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dict], model: dict | None,
+                      raw: float | None = None, domain: list[float] | None = None, default: bool = False) -> None:
     st.markdown("## Why this risk score?")
-    st.markdown(f"Selected: `{title}` · risk **{p:.2f}**" + (f" · rank {rank_no}" if rank_no else ""))
+    # a long path wraps instead of breaking mid-word or overflowing; copying it gives the plain path (E-8)
+    shown = f'<code style="white-space: normal; overflow-wrap: anywhere">{html.escape(title)}</code>'
+    st.markdown(f"Selected: {shown} · risk **{p:.2f}**" + (f" · rank {rank_no}" if rank_no else "")
+                + (" (shown by default; select a row to change)" if default else ""),                  # E-6
+                unsafe_allow_html=True)
     if not codes:
         st.info("No reason codes stored for this score.")
         return
-    st.altair_chart(reason_chart(codes), width="stretch")
-    st.caption("Bars show feature contributions to the model's **uncalibrated** score: dark raises risk, "
-               "light lowers it. They show what the model associates with risk, not what causes defects.")
-    attribution = ((model or {}).get("record") or {}).get("explanation", {}).get("attribution", "")
-    note = "Contributions assume the features are independent."
-    if "kernel" in attribution.lower():
-        note += " Explanations for this model are approximate."
-    st.caption(f"Attribution: {attribution or 'not recorded'}. {note}")
+    st.altair_chart(reason_chart(codes, domain), width="stretch")
+    st.caption("Bars show feature contributions to the model's **uncalibrated** score: dark blue raises risk, "
+               "tan lowers it. They show what the model associates with risk, not what causes defects.")  # E-7
+    record = (model or {}).get("record") or {}
+    if raw is not None and not pd.isna(raw):                                                          # E-4
+        total = sum(c["contribution"] for c in codes)
+        scale = (record.get("explanation") or {}).get("scale", "raw")
+        st.caption(f"Baseline {raw - total:+.3f} + contributions {total:+.3f} = uncalibrated score {raw:.3f}"
+                   f" ({scale}); calibration maps it to the risk {p:.2f} shown above.")
+    attribution = (record.get("explanation") or {}).get("attribution", "")
+    note = next((v for k, v in ATTRIBUTION_NOTES.items() if k in attribution.lower()), "")
+    st.caption(f"Attribution: {attribution or 'not recorded'}" + (f": {note}." if note else ".")
+               + " Contributions assume the features are independent.")
 
 
 def main() -> None:
@@ -233,7 +271,9 @@ def main() -> None:
         with right:
             if sel is not None:
                 r = shown.iloc[sel]
-                explanation_panel(r["commit"][:10], r["p"], None, r["reason_codes"] or [], db.model(r["model_version"]))
+                explanation_panel(r["commit"][:10], r["p"], None, r["reason_codes"] or [], db.model(r["model_version"]),
+                                  raw=r.get("raw"), domain=contribution_domain(shown["reason_codes"]),
+                                  default=not ev.selection.rows)
     else:
         if len(ranking):
             r = rank(ranking.rename(columns={"module": "id"}), key)
@@ -306,7 +346,9 @@ def main() -> None:
         with right:
             if sel is not None:
                 row = r.iloc[sel]
-                explanation_panel(row["id"], row["p"], int(row["#"]), row["reason_codes"] or [], model)
+                explanation_panel(row["id"], row["p"], int(row["#"]), row["reason_codes"] or [], model,
+                                  raw=row.get("raw"), domain=contribution_domain(r["reason_codes"]),
+                                  default=not ev.selection.rows and sel == 0)
 
     # ---------------------------------------------------------------- ordered test plan
     tp = db.test_plan(run_id)
@@ -411,4 +453,5 @@ def main() -> None:
                 tooltip=["build", "mean_in_budget_risk", "in_budget_modules"]), width="stretch")
 
 
-main()
+if __name__ == "__main__":  # `streamlit run` executes the file as __main__; importing it does not
+    main()
