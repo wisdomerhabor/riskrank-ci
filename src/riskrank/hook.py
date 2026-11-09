@@ -197,12 +197,16 @@ def run(a) -> dict:
     return plan
 
 
+def _noun(n: int, word: str) -> str:
+    return word if n == 1 else word + "s"
+
+
 def summary(plan: dict) -> str:
     st = plan["test_plan"]["stats"]
     flagged = [r for r in plan["ranking"] if r["flagged"]]
     jit = plan["commit_level"]
     lines = ["## RiskRank risk summary", "",
-             f"**{plan['modules_touched']}** modules touched, **{len(plan['ranking'])}** ranked; "
+             f"**{plan['modules_touched']}** {_noun(plan['modules_touched'], 'module')} touched, **{len(plan['ranking'])}** ranked; "
              f"**{st['in_budget_count']}** of {st['tests_total']} tests in budget "
              f"({st['in_budget_fraction']:.0%} of the suite).", ""]
     if flagged:
@@ -212,7 +216,7 @@ def summary(plan: dict) -> str:
     if jit["status"] == "not configured":
         lines += ["Build escalation: **not configured** (no just-in-time model in the settings).", ""]
     else:
-        lines += [f"Commit-level risk: {jit['status']}; {len(above)} commit(s) above threshold"
+        lines += [f"Commit-level risk: {jit['status']}; {len(above)} {_noun(len(above), 'commit')} above threshold"
                   + (f", {len(outside)} outside the training range" if outside else "") + ".",
                   f"Build escalated: **{'yes' if plan['escalated'] else 'no'}** (escalation never fails the build).", ""]
     lines += ["Full plan: the `riskrank-plan` artifact of this run."]

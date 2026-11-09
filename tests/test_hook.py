@@ -21,3 +21,12 @@ def test_summary_without_ranked_modules():
             "test_plan": {"stats": {"in_budget_count": 0, "tests_total": 80, "in_budget_fraction": 0.0,
                                     "stale_map_warning": False}}}
     assert "**0** modules touched" in summary(plan)
+
+
+def test_summary_singular_module():
+    plan = {"modules_touched": 1, "ranking": [{"flagged": False}], "escalated": False,
+            "commit_level": {"status": "not configured", "commits": []},
+            "test_plan": {"stats": {"in_budget_count": 416, "tests_total": 494, "in_budget_fraction": 0.84,
+                                    "stale_map_warning": False}}}
+    out = summary(plan)
+    assert "**1** module touched" in out and "modules touched" not in out
