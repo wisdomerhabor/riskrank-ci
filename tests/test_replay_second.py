@@ -77,3 +77,21 @@ def test_tox_branch_archives_are_found_for_pinning(tmp_path):
                    "    examples/tutorial[test]\n")
     from riskrank.replay_second import tox_archives
     assert tox_archives(str(tox)) == [("pallets/werkzeug", "master"), ("pallets/click", "main")]
+
+
+def test_combine_prefers_a_real_outcome_over_a_build_failure(tmp_path, monkeypatch):
+    # The amendment's containers screen candidates that an earlier run recorded as build failures.
+    import json
+    from riskrank import replay_second as rs
+    base, older = tmp_path / "base", tmp_path / "older"
+    for d, rec in ((base, {"fix": "f1", "anchor_date": "2018-01-01T00:00:00Z", "excluded": "build_failure"}),
+                   (older, {"fix": "f1", "anchor_date": "2018-01-01T00:00:00Z", "excluded": "backport_passes_all_three"})):
+        (d / "second_check").mkdir(parents=True)
+        (d / "second_check" / "screen.jsonl").write_text(json.dumps(rec) + "\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rs, "load_config", lambda: {"second_check": {}})
+    monkeypatch.setattr(rs, "OUT", str(tmp_path / "out" / "second_check"))
+    rs.phase_combine([str(base), str(older), str(tmp_path / "missing")])
+    out = json.load(open(tmp_path / "out" / "second_check.json"))
+    assert out["excluded"]["build_failure"] == 0 and out["excluded"]["backport_passes_all_three"] == 1
+    assert out["reproduced"] == 0 and out["reporting"].startswith("fewer than 12")

@@ -208,11 +208,19 @@ def sha_at(repo: str, branch: str, date: str) -> str:
     date = pd.Timestamp(date).tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")  # a "+hh:mm" offset breaks the query
     k = (repo, branch, date)
     if k not in _SHAS:
+        import urllib.request
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         for b in (branch, "main", "master"):
-            r = subprocess.run(["gh", "api", f"repos/{repo}/commits?sha={b}&until={date}&per_page=1", "-q", ".[0].sha"],
-                               capture_output=True, text=True)
-            if r.returncode == 0 and r.stdout.strip():
-                _SHAS[k] = r.stdout.strip()
+            req = urllib.request.Request(f"https://api.github.com/repos/{repo}/commits?sha={b}&until={date}&per_page=1",
+                                         headers={"Accept": "application/vnd.github+json", "User-Agent": "riskrank"}
+                                         | ({"Authorization": f"Bearer {token}"} if token else {}))
+            try:
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    got = json.load(r)
+            except Exception:  # a renamed or missing branch: try the next name
+                continue
+            if got:
+                _SHAS[k] = got[0]["sha"]
                 break
         else:
             raise RuntimeError(f"no commit of {repo}@{branch} before {date}")
@@ -389,7 +397,7 @@ def validation_model():
 
 
 # ------------------------------------------------------------------ phases
-def phase_screen(limit: int | None) -> None:
+def phase_screen(limit: int | None, python: str | None = None) -> None:
     cfg = load_config()
     sep = pd.Timestamp(json.load(open("runs/first_check_date.json"))["separation_date"])
     fixes = [f for f in json.load(open("data/mined/flask/bugfixes.json")) if pd.Timestamp(f["fix_date"]) >= sep]
@@ -398,7 +406,10 @@ def phase_screen(limit: int | None) -> None:
     os.makedirs(WORK, exist_ok=True)
     path = os.path.join(OUT, "screen.jsonl")
     done = {json.loads(line)["fix"] for line in open(path)} if os.path.exists(path) else set()
-    todo = [f for f in fixes if f["fix_commit_hash"] not in done][: limit or None]
+    todo = [f for f in fixes if f["fix_commit_hash"] not in done]
+    if python:  # one interpreter per container (the 9 Nov amendment): only the candidates that need it
+        todo = [f for f in todo if python_for(git("show", "-s", "--format=%cI", f["fix_commit_hash"] + "^").strip()) == python]
+    todo = todo[: limit or None]
     print(f"{len(fixes)} candidates on or after {sep.date()}; {len(done)} screened; {len(todo)} to go "
           f"(config {cfg['repository']})", flush=True)
     for fx in todo:
@@ -451,6 +462,13 @@ def phase_rank() -> None:
         results.append(row)
         print(fix[:8], {k: round(row[k]["apfd"], 3) for k in ("system", "largest_first", "recency")}, flush=True)
 
+    out = summarise(screened, results, model_check, cfg)
+    with open(OUT + ".json", "w") as fh:
+        json.dump(out, fh, indent=1, default=str)
+    print(json.dumps({k: out[k] for k in ("candidates", "reproduced", "excluded")}, indent=1))
+
+
+def summarise(screened: list[dict], results: list[dict], model_check: dict, cfg: dict) -> dict:
     counts = {c: sum(1 for r in screened if r.get("excluded") == c) for c in EXCLUSIONS}
     by_year = {}
     for r in screened:
@@ -465,18 +483,59 @@ def phase_rank() -> None:
            "aggregate": None if len(results) < 12 else {
                k: {m: float(np.mean([r[k][m] for r in results])) for m in ("tf", "apfd", "apfdc")}
                for k in ("system", "largest_first", "recency", "random")},
-           "reporting": "fewer than 12 reproduced defects: each reported individually, no mean, no comparative conclusion"}
+           "reporting": ("fewer than 12 reproduced defects: each reported individually, no mean, no comparative conclusion"
+                         if len(results) < 12 else "12 or more reproduced defects: means over defects reported")}
+    return out
+
+
+def phase_combine(dirs: list[str]) -> None:
+    """Merge screens and rankings run in different environments (the 9 Nov amendment's containers): for a fix
+    screened more than once, the record that is not a build failure wins; the summary is recomputed."""
+    cfg = load_config()
+    screened: dict[str, dict] = {}
+    results: dict[str, dict] = {}
+    checks = []
+    for d in dirs:
+        sf = os.path.join(d, "second_check", "screen.jsonl")
+        if not os.path.exists(sf):  # a container that produced nothing contributes nothing
+            print(f"no screen in {d}", flush=True)
+            continue
+        for line in open(sf):
+            r = json.loads(line)
+            if r["fix"] not in screened or screened[r["fix"]].get("excluded") == "build_failure":
+                screened[r["fix"]] = r
+        f = os.path.join(d, "second_check.json")
+        if os.path.exists(f):
+            prev = json.load(open(f))
+            checks.append(prev["validation_model_check"])
+            for row in prev["per_defect"]:
+                results[row["fix"]] = row
+    kept = [results[f] for f in screened if f in results and screened[f].get("reproduced")]
+    out = summarise(list(screened.values()), sorted(kept, key=lambda r: r["anchor_date"]), checks[0] if checks else {}, cfg)
+    out["validation_model_checks"] = checks
+    out["combined_from"] = dirs
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, "screen.jsonl"), "w") as fh:
+        for r in sorted(screened.values(), key=lambda r: r["anchor_date"]):
+            fh.write(json.dumps(r) + "\n")
     with open(OUT + ".json", "w") as fh:
         json.dump(out, fh, indent=1, default=str)
-    print(json.dumps({k: out[k] for k in ("candidates", "reproduced", "excluded")}, indent=1))
+    print(json.dumps({k: out[k] for k in ("candidates", "reproduced", "excluded", "reporting")}, indent=1))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("phase", choices=["screen", "rank"])
+    ap.add_argument("phase", choices=["screen", "rank", "combine"])
     ap.add_argument("--limit", type=int, default=None, help="screen at most N more candidates")
+    ap.add_argument("--python", help="screen only the candidates that need this Python version (one per container)")
+    ap.add_argument("--inputs", nargs="+", default=[], help="combine: folders each holding second_check/ and second_check.json")
     a = ap.parse_args()
-    phase_screen(a.limit) if a.phase == "screen" else phase_rank()
+    if a.phase == "screen":
+        phase_screen(a.limit, a.python)
+    elif a.phase == "rank":
+        phase_rank()
+    else:
+        phase_combine(a.inputs)
 
 
 if __name__ == "__main__":

@@ -181,6 +181,11 @@ second_check:
   # time had it; (4) branch archives that tox.ini's [testenv] installs (the sibling Pallets libraries in development,
   # 2017-2021 and 2023) are installed at their last commit on or before the anchor's committer date. Unchanged: a
   # Python version uv cannot provide is a build failure (this workstation, Apple silicon: no 3.6 or 3.7).
+  # AMENDED AGAIN 9 Nov 2026, ~12:00 UTC, AFTER the Linux run (42609228858) had reported 8 reproduced defects of 79,
+  # with all 38 candidates of 2017-2019 build failures because uv provides no CPython 3.6 or 3.7 (student's decision,
+  # recorded with this disclosure): where uv cannot provide the Python version, the official python:<version> Docker
+  # image provides it (uv finds that interpreter on the search path; every other rule unchanged). Both results are
+  # reported: the result under the rule as first written (8 reproduced), and the result with the amendment.
   measurement_tools (detail): >-
     coverage.py and a small results plugin (tools/second_check) are installed WITHOUT the date limit, at the newest
     versions supporting the anchor's Python: per-test coverage contexts need coverage 5.0 (Dec 2019), so a dated

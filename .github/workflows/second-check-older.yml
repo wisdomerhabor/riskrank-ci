@@ -1,0 +1,83 @@
+# Second bounded check, 2017-2019 candidates (the 9 Nov 2026 amendment, made AFTER the first Linux run had
+# reported; see config second_check). uv cannot provide CPython 3.6 or 3.7, so each runs inside the official
+# python:<version> image, whose interpreter uv finds on the search path. Every other rule is unchanged; the
+# harness itself runs on a uv-managed Python 3.13 inside the container. The combine job merges these records
+# with the earlier run (base_run), where the same candidates were build failures, and recomputes the summary.
+name: second-check-older
+on:
+  workflow_dispatch:
+    inputs:
+      base_run:
+        description: the second-check run whose records these extend
+        default: "42609228858"
+      inputs_release:
+        description: riskrank-ci release holding second-check-inputs.tar.gz
+        default: eval-inputs-20261109
+permissions:
+  contents: read
+  actions: read
+env:
+  PIN: scipy==1.18.1 threadpoolctl==3.8.0 joblib==1.6.0
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  older:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.6", "3.7"]
+    container: python:${{ matrix.python }}-slim
+    steps:
+      - name: Tools (git, curl, uv 0.13.7)
+        run: |
+          apt-get update -qq && apt-get install -y -qq git curl ca-certificates > /dev/null
+          curl -LsSf https://astral.sh/uv/0.13.7/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+          uv --version && python${{ matrix.python }} -V
+      - uses: actions/checkout@v4
+      - name: Harness on Python 3.13 (uv-managed), pinned as on the workstation
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          uv python install 3.13
+          uv venv -q --python 3.13 /opt/rr
+          uv pip install -q --python /opt/rr/bin/python -r requirements.txt $PIN
+          uv pip install -q --python /opt/rr/bin/python --no-deps -e .
+      - name: Inputs and the Flask repository
+        run: |
+          curl -LsSf -o in.tgz "https://github.com/$GITHUB_REPOSITORY/releases/download/${{ inputs.inputs_release }}/second-check-inputs.tar.gz"
+          tar xzf in.tgz && sha256sum runs/first_check*.json data/mined/flask/*
+          git clone -q https://github.com/pallets/flask data/repos/pallets/flask
+          git -C data/repos/pallets/flask config user.email ci@example.invalid
+          git -C data/repos/pallets/flask config user.name ci
+      - run: PATH="/opt/rr/bin:$PATH" python -m riskrank.replay_second screen --python ${{ matrix.python }}
+      - run: PATH="/opt/rr/bin:$PATH" python -m riskrank.replay_second rank
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: second-check-py${{ matrix.python }}
+          path: |
+            runs/second_check/
+            runs/second_check.json
+
+  combine:
+    needs: older
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - name: The base run and both containers' records
+        run: |
+          gh run download "${{ inputs.base_run }}" -R "$GITHUB_REPOSITORY" -n second-check -D parts/base/runs
+          for v in 3.6 3.7; do gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n second-check-py$v -D parts/py$v/runs || true; done
+          find parts -maxdepth 4 | sort
+      - run: python -m riskrank.replay_second combine --inputs parts/base/runs parts/py3.6/runs parts/py3.7/runs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: second-check-combined
+          path: |
+            runs/second_check/
+            runs/second_check.json
