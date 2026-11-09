@@ -102,3 +102,23 @@ def test_only_the_egg_info_dev_tag_is_removed_from_a_sibling_setup_cfg():
     out, dropped = strip_dev_tag(cfg)
     assert dropped and out == "[egg_info]\n\n[aliases]\nrelease = egg_info -RDb ''\n\n[x]\ntag_build = keep\n"
     assert strip_dev_tag("[metadata]\nlicense_file = LICENSE\n") == ("[metadata]\nlicense_file = LICENSE\n", False)
+
+
+def test_a_teardown_error_does_not_hide_a_call_phase_assertion_failure(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    (tmp_path / "test_x.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef leaky():\n    yield\n    assert False, 'teardown'\n\n"
+        "def test_fails_then_teardown_errors(leaky):\n    assert 1 == 2\n\n"
+        "def test_passes_then_teardown_errors(leaky):\n    pass\n")
+    tools = os.path.join(os.path.dirname(__file__), "..", "tools", "second_check")
+    res = tmp_path / "r.json"
+    subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "results_plugin", "-p", "no:cacheprovider", "test_x.py"],
+                   cwd=tmp_path, env=os.environ | {"PYTHONPATH": tools, "RESULTS": str(res)}, capture_output=True)
+    got = json.loads(res.read_text())
+    assert got["test_x.py::test_fails_then_teardown_errors"]["outcome"] == "failed"
+    assert got["test_x.py::test_fails_then_teardown_errors"]["exc"] == "AssertionError"
+    assert got["test_x.py::test_passes_then_teardown_errors"]["outcome"] == "error"
+    assert run_status(got, ["test_x.py::test_fails_then_teardown_errors"]) == "fail"

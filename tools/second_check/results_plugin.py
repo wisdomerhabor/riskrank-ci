@@ -2,6 +2,7 @@
 
 RESULTS=<file>    write {node id: {"outcome", "exc", "call"}} as JSON at the end of the session:
                   outcome = passed | failed (call phase) | error (setup or teardown) | skipped
+                            (a teardown error after a call-phase failure keeps "failed"; it is recorded as "teardown")
                   exc     = the exception type name of a failure or error, else null
                   call    = call-phase duration in seconds
 COVERAGE_CONTEXTS=1   switch coverage.py's dynamic context to the node id at each test's setup, so a later
@@ -35,6 +36,8 @@ def pytest_runtest_makereport(item, call):
             rec["outcome"] = "skipped"
         elif rep.failed:
             rec["outcome"], rec["exc"] = "failed", exc
+    elif rep.failed and rep.when == "teardown" and rec["outcome"] == "failed":
+        rec["teardown"] = exc  # the call already failed: its outcome stands (setup/collection errors are the rule's)
     elif rep.failed:
         rec["outcome"], rec["exc"] = "error", exc
     elif rep.skipped and rep.when == "setup":
