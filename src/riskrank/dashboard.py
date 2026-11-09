@@ -104,8 +104,10 @@ def reading(feature: str, value: float, direction: str) -> str:
 
 def contribution_domain(code_lists) -> list[float]:
     """One x-axis for every score in view, so bars compare across rows (E-3)."""
-    m = max((abs(c["contribution"]) for codes in code_lists for c in (codes or [])), default=1.0) or 1.0
-    return [-m * 1.05, m * 1.05]
+    vals = [c["contribution"] for codes in code_lists for c in (codes or [])] or [0.0]
+    lo, hi = min(0.0, min(vals)), max(0.0, max(vals))   # zero always in view; no empty half when all one sign
+    pad = 0.05 * ((hi - lo) or 1.0)
+    return [lo - (pad if lo < 0 else 0.0), hi + (pad if hi > 0 else 0.0)]
 
 
 def reason_chart(codes: list[dict], domain: list[float] | None = None) -> alt.Chart:
@@ -135,7 +137,7 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
     if not codes:
         st.info("No reason codes stored for this score.")
         return
-    st.altair_chart(reason_chart(codes, domain), width="stretch")
+    st.altair_chart(reason_chart(codes, domain), width="stretch", theme=None)
     if top_only:                                                                                        # C-9
         st.caption(f"Showing the top {len(codes)} features by size of contribution (the pipeline keeps the five "
                    "largest per commit), so the features listed differ between commits.")
@@ -154,7 +156,12 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
 
 
 def main() -> None:
-    st.set_page_config(page_title=PRODUCT, layout="wide")
+    st.set_page_config(page_title=PRODUCT, layout="wide", initial_sidebar_state="collapsed")
+    # keep the heading levels (HD-8) but at dashboard sizes, and tiles that fit their values (L-4)
+    st.markdown("<style>h1 {font-size: 1.75rem !important; padding-top: 0.2rem !important} "
+                "h2 {font-size: 1.3rem !important} h3 {font-size: 1.08rem !important} "
+                "[data-testid='stMetricValue'] {font-size: 1.15rem !important; white-space: normal !important}"
+                "</style>", unsafe_allow_html=True)
     user = login()
     db = store(os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
 
@@ -208,7 +215,7 @@ def main() -> None:
     # status tiles that stay above the tabs (walkthrough L-3, L-4)
     t = st.columns(4)
     t[0].metric("Build escalated", {True: "yes", False: "no"}.get(run["escalated"], "not assessed")
-                if run["jit_status"] == "assessed" else "not assessed")
+                if run["jit_status"] == "assessed" else str(run["jit_status"] or "not assessed"))
     t[1].metric("Pipeline status", str(run["status"] or "unknown"))
     age = ((run.get("detail") or {}).get("stats") or {}).get("commits_since_map")
     t[2].metric("Coverage map age", "unknown" if age is None else f"{age} commit{'' if age == 1 else 's'}")
@@ -317,7 +324,7 @@ def main() -> None:
                                    if share is not None and unit == "lines" and share > budget / 100 + 1e-9 else ""))
                     if len(r):
                         n_flag = int(r["flagged"].sum())
-                        st.caption(f"{n_flag} of {len(r)} modules above the {threshold:.2f} threshold.")          # S-5
+                        st.caption(f"{n_flag} of {len(r)} module{'' if len(r) == 1 else 's'} above the {threshold:.2f} threshold.")          # S-5
                         if preview:
                             base = rank(ranking.rename(columns={"module": "id"}), stored["ranking_key"])
                             was = set(base.loc[mark(base, stored["budget_unit"], stored["budget"] / 100,
@@ -404,7 +411,7 @@ def main() -> None:
                     st.warning(f"The coverage map is {age} commits old: tests for code added since then are not mapped.")
                 # ranked and unranked tests apart (T-4); no "None" cells (T-5); status pinned on the left (T-6);
                 # tables sized to their rows so the page, not the table, scrolls (T-7); wide test column (T-8)
-                fit = lambda n: 35 * (n + 1) + 3
+                fit = lambda n: min(35 * (n + 1) + 3, 528)  # short tables in full; long ones capped at 14 rows
                 cfg = {"#": st.column_config.NumberColumn(pinned=True, width="small"),
                        "in budget": st.column_config.TextColumn(pinned=True, width="small"),
                        "test": st.column_config.TextColumn(width="large")}
@@ -462,8 +469,8 @@ def main() -> None:
                         # axes that start at 0 (O-9) and a labelled budget line (O-8)
                         pick = alt.selection_point(fields=["ordering"], bind="legend")
                         line = alt.Chart(d).mark_line().encode(
-                            x=alt.X("lines inspected (%):Q", scale=alt.Scale(domain=[0, 100])),
-                            y=alt.Y("defect recall (%):Q", scale=alt.Scale(domain=[0, 100])),
+                            x=alt.X("lines inspected (%):Q", scale=alt.Scale(domain=[0, 100], nice=False, padding=0)),
+                            y=alt.Y("defect recall (%):Q", scale=alt.Scale(domain=[0, 100], nice=False, padding=0)),
                             strokeDash=alt.StrokeDash("ordering:N", sort=BASELINE_ORDER),
                             color=alt.Color("ordering:N", sort=BASELINE_ORDER, scale=alt.Scale(
                                 domain=BASELINE_ORDER, range=["#1f3a5f", "#8c8c8c", "#b5834c", "#2a9d8f", "#6a4c93"])),
@@ -472,10 +479,13 @@ def main() -> None:
                                      alt.Tooltip("defect recall (%):Q", format=".1f")]).add_params(pick)
                         budget_line = pd.DataFrame({"x": [20], "label": ["20% budget"]})
                         rule = alt.Chart(budget_line).mark_rule(color="#b5834c").encode(
-                            x=alt.X("x:Q", title="lines inspected (%)"), tooltip=[alt.Tooltip("label:N", title="line")])
+                            x=alt.X("x:Q", title="lines inspected (%)", scale=alt.Scale(domain=[0, 100], nice=False, padding=0)),
+                            tooltip=[alt.Tooltip("label:N", title="line")])
                         label = alt.Chart(budget_line).mark_text(align="left", dx=4, dy=-6, color="#b5834c").encode(
                             x="x:Q", y=alt.value(8), text="label:N")
-                        st.altair_chart(line + rule + label, width="stretch")
+                        # theme=None: Streamlit's chart theme squeezed the gridlines inside the data range (0 and 100 drew
+                        # off their gridlines; seen in Chrome, 9 Nov), so every chart here uses Vega-Lite's own theme
+                        st.altair_chart((line + rule + label).configure_axis(offset=0), width="stretch", theme=None)
                         st.caption("Click a legend entry to isolate its curve; click empty space to show all.")
                     vals = [("system", off["recall"])] + [(b["baseline"], b["recall"]) for b in off["baselines"]
                                                            if b["recall"] is not None]
@@ -495,15 +505,17 @@ def main() -> None:
                                   "lower is better)" if prev is not None else "")
                                + " · grey diagonal = perfect calibration · numbers = modules in each bin")
                     b = pd.DataFrame(bins)
-                    enc = dict(x=alt.X("mean_p:Q", title="predicted risk", scale=alt.Scale(domain=[0, 1])),
-                               y=alt.Y("observed:Q", title="observed defect rate", scale=alt.Scale(domain=[0, 1])))
+                    prob_scale = alt.Scale(domain=[0, 1], nice=False, padding=0)
+                    enc = dict(x=alt.X("mean_p:Q", title="predicted risk", scale=prob_scale),
+                               y=alt.Y("observed:Q", title="observed defect rate", scale=prob_scale))
                     pts = alt.Chart(b).mark_line(point=True).encode(
                         **enc, tooltip=[alt.Tooltip("mean_p:Q", title="mean predicted risk", format=".3f"),
                                         alt.Tooltip("observed:Q", title="observed defect rate", format=".3f"),
                                         alt.Tooltip("n:Q", title="modules in bin")])                                  # O-5
                     counts = alt.Chart(b).mark_text(dy=-10, fontSize=11).encode(**enc, text="n:Q")                   # O-6
-                    diag = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(color="grey").encode(x="x", y="y")
-                    st.altair_chart(diag + pts + counts, width="stretch")
+                    diag = alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line(color="grey").encode(
+                        x=alt.X("x:Q", scale=prob_scale), y=alt.Y("y:Q", scale=prob_scale))
+                    st.altair_chart((diag + pts + counts).configure_axis(offset=0), width="stretch", theme=None)
             with e3:
                 st.markdown("### Risk trend over recent builds")
                 trend = db.risk_trend(project, limit=12)
@@ -522,7 +534,7 @@ def main() -> None:
                             alt.Tooltip("in_budget_modules:Q", title="in-budget modules")]                            # O-5
                     base = alt.Chart(trend).encode(x=x, y=alt.Y("mean_in_budget_risk:Q", title="average risk"), tooltip=tips)
                     here = base.transform_filter("datum.selected").mark_point(size=160, filled=True, color="#1f3a5f")
-                    st.altair_chart(base.mark_line(point=True, color="#8c8c8c") + here, width="stretch")
+                    st.altair_chart(base.mark_line(point=True, color="#8c8c8c") + here, width="stretch", theme=None)
 
 
 if __name__ == "__main__":  # `streamlit run` executes the file as __main__; importing it does not

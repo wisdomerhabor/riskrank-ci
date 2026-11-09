@@ -120,7 +120,8 @@ def test_explanation_panel_low_severity_fixes(env):
     from riskrank.dashboard import contribution_domain, reading
     assert reading("prior_fixes", 0.0, "lowered") == "no prior fixes (0) lowers risk"                    # E-5
     assert reading("size", 120.0, "raised") == "lines of code = 120 raises risk"
-    assert contribution_domain([[{"contribution": 0.5}], [{"contribution": -1.0}]]) == [-1.05, 1.05]     # E-3
+    assert contribution_domain([[{"contribution": 0.5}], [{"contribution": -1.0}]]) == [-1.075, 0.575]
+    assert contribution_domain([[{"contribution": 2.0}]])[0] == 0.0  # no empty negative half     # E-3
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     t = text(at)
