@@ -21,6 +21,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -43,10 +45,21 @@ CK = ["wmc", "dit", "noc", "cbo", "rfc", "lcom", "ca", "ce", "npm", "lcom3", "lo
 
 
 # ------------------------------------------------------------------ fetching
-def _get(url: str) -> bytes:
+def _get(url: str, attempts: int = 6) -> bytes:
+    """GET with retries: Zenodo answers some requests with 429 or 5xx under load (seen from CI runners)."""
     req = urllib.request.Request(url, headers={"User-Agent": "riskrank-benchmarks"})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return r.read()
+    for k in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code != 429 and e.code < 500 or k == attempts - 1:
+                raise
+        except urllib.error.URLError:
+            if k == attempts - 1:
+                raise
+        time.sleep(10 * 2 ** k)  # 10 s, 20 s, 40 s ... (checksums are verified after every download)
+    raise AssertionError("unreachable")
 
 
 def fetch() -> dict:
