@@ -157,3 +157,16 @@ def test_no_commit_model_means_escalation_not_configured(push, monkeypatch):
     s = _settings(push["tmp"], models={"module": {"version": "m1", "sha256": HEX}})
     plan = hook.run(_args(push, s))
     assert plan["commit_level"]["status"] == "not configured" and plan["escalated"] is False
+
+
+def test_plan_records_when_the_coverage_map_was_made(push, monkeypatch):
+    """The dashboard shows the map's age with a date (feedback 9 Nov), so the plan carries it."""
+    _stub_service(monkeypatch, MODULE_P, 0.1)
+    meta = json.loads(push["cov"].read_text())
+    meta["meta"]["collected_at"] = "2026-11-08T20:00:00+00:00"
+    push["cov"].write_text(json.dumps(meta))
+    plan = hook.run(_args(push, _settings(push["tmp"])))
+    stats = plan["test_plan"]["stats"]
+    expected = _git(push["repo"], "show", "-s", "--format=%cI", push["before"])
+    assert stats["commits_since_map"] == 1 and stats["coverage_map_committed_at"] == expected
+    assert stats["coverage_map_collected_at"] == "2026-11-08T20:00:00+00:00"

@@ -48,6 +48,8 @@ def build_plan(
     map_commit: str | None = None,
     commits_since_map: int | None = None,
     map_age_intervals: float | None = None,
+    map_committed_at: str | None = None,
+    map_collected_at: str | None = None,
 ) -> TestPlan:
     rank = {m: i for i, (m, _) in enumerate(ranked)}
     budget = dict(ranked)
@@ -91,6 +93,8 @@ def build_plan(
         "ranked_modules_missing_from_map": sorted(m for m, _ in ranked if m not in covered),
         "coverage_map_commit": map_commit,
         "commits_since_map": commits_since_map,
+        "coverage_map_committed_at": map_committed_at,   # when the mapped commit was made (ISO 8601)
+        "coverage_map_collected_at": map_collected_at,   # when the map was built from it
         "stale_map_warning": bool(map_age_intervals is not None and map_age_intervals > 2),
     }
     assert len(items) == len(set(current)), "a test was lost or duplicated"

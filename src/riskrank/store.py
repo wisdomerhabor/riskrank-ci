@@ -252,6 +252,22 @@ class Store:
         return run_id
 
     # ---------------------------------------------------------------- reads
+    def backfill_map_dates(self, project: str, dates: dict[str, str]) -> int:
+        """Add the coverage map's commit date to runs stored before plans carried it. Only fills a missing
+        value; never changes one the pipeline recorded. Returns the number of runs updated."""
+        n = 0
+        with self.engine.begin() as c:
+            rows = c.execute(select(prioritisation_run.c.id, prioritisation_run.c.detail).where(
+                prioritisation_run.c.project == project, prioritisation_run.c.run_type == "runtime")).all()
+            for rid, detail in rows:
+                stats = (detail or {}).get("stats") or {}
+                when = dates.get(stats.get("coverage_map_commit") or "")
+                if when and not stats.get("coverage_map_committed_at"):
+                    new = dict(detail); new["stats"] = {**stats, "coverage_map_committed_at": when}
+                    c.execute(prioritisation_run.update().where(prioritisation_run.c.id == rid).values(detail=new))
+                    n += 1
+        return n
+
     def runtime_runs(self, project: str | None = None) -> pd.DataFrame:
         q = select(prioritisation_run, coverage_map.c.commit.label("coverage_map_commit")).select_from(
             prioritisation_run.outerjoin(coverage_map)).where(prioritisation_run.c.run_type == "runtime")
@@ -399,6 +415,16 @@ if __name__ == "__main__":
     # python -m riskrank.store <url>                  -> table row counts
     # python -m riskrank.store migrate <from> <to>    -> copy every row into an empty store (NFR11)
     import sys
+    # python -m riskrank.store backfill-map-dates <db url> <project> <git clone>   -> dates for older runs
+    if sys.argv[1:2] == ["backfill-map-dates"]:
+        import subprocess
+        url, project, clone = sys.argv[2:5]
+        st = Store(url)
+        commits = st.runtime_runs(project)["coverage_map_commit"].dropna().unique()
+        dates = {c: subprocess.run(["git", "-C", clone, "show", "-s", "--format=%cI", c], capture_output=True,
+                                   text=True, check=True).stdout.strip() for c in commits}
+        print(f"{st.backfill_map_dates(project, dates)} runs updated; {dates}")
+        sys.exit(0)
     if sys.argv[1:2] == ["migrate"]:
         print(json.dumps(migrate(sys.argv[2], sys.argv[3]), indent=1))
     else:

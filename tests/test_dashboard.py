@@ -188,6 +188,23 @@ def test_layout_low_severity_fixes(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     assert [m.label for m in at.metric] == ["Build escalated", "Pipeline status", "Coverage map age", "Pushed commit"]
-    assert at.metric[0].value == "yes" and at.metric[2].value == "4 commits"                              # L-4
+    assert at.metric[0].value == "yes" and at.metric[2].value == "4 commits ago"                              # L-4
     assert [x.label for x in at.tabs] == ["This build: ranked changes", "Test plan the pipeline ran",
                                           "Offline model evaluation"]                                        # L-2, L-3
+
+
+def test_coverage_map_age_carries_a_date(env):
+    """Feedback 9 Nov: "28 commits ago" should include the date and time (shown in WAT)."""
+    from riskrank.dashboard import local_time, map_age
+    assert local_time("2026-11-08T20:29:24Z") == "8 Nov 2026, 21:29 WAT"
+    assert map_age({"commits_since_map": 28, "coverage_map_committed_at": "2026-11-08T17:15:06+01:00"}) \
+        == "28 commits ago, committed 8 Nov 2026, 17:15 WAT"
+    assert map_age({"commits_since_map": 1}) == "1 commit ago" and map_age({}) == "age not recorded"
+    import os
+    s = Store(os.environ["RISKRANK_DB"])
+    assert s.backfill_map_dates("o/r", {"cm1": "2026-11-08T09:00:00Z"}) == 1
+    assert s.backfill_map_dates("o/r", {"cm1": "2026-01-01T00:00:00Z"}) == 0     # never overwrites
+    at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
+    assert not at.exception, at.exception
+    assert at.metric[2].value == "4 commits ago, committed 8 Nov 2026, 10:00 WAT"
+    assert "(4 commits ago, committed 8 Nov 2026, 10:00 WAT)" in text(at)

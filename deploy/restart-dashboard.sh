@@ -17,7 +17,8 @@ docker run -d --name rr-dashboard -p 127.0.0.1:8501:8501 \
   riskrank-dashboard >/dev/null
 for _ in $(seq 1 30); do
   if curl -fs http://127.0.0.1:8501/_stcore/health >/dev/null; then
-    echo "Dashboard running from commit $(git rev-parse --short HEAD): http://127.0.0.1:8501"
+    dirty=""; git diff --quiet HEAD -- src deploy || dirty=" plus uncommitted changes"
+    echo "Dashboard running from commit $(git rev-parse --short HEAD)$dirty: http://127.0.0.1:8501"
     exit 0
   fi
   sleep 1

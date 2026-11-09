@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import os
+from datetime import datetime, timedelta, timezone
 
 import altair as alt
 import pandas as pd
@@ -40,6 +41,26 @@ ATTRIBUTION_NOTES = {  # one plain-language line per method (E-9)
     "kernel": "Kernel SHAP estimates each feature's share by sampling, so the bars are approximate",
 }
 BASELINE_ORDER = ["system", "random", "largest-first", "smallest-first", "recency-based"]
+WAT = timezone(timedelta(hours=1), "WAT")  # Lagos time; Nigeria keeps no daylight saving
+
+
+def local_time(iso: str | None) -> str | None:
+    """'2026-11-08T21:29:24+01:00' -> '8 Nov 2026, 21:29 WAT'; None when missing or unreadable."""
+    try:
+        t = datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(WAT)
+    except (TypeError, ValueError):
+        return None
+    return f"{t.day} {t:%b %Y, %H:%M} WAT"
+
+
+def map_age(stats: dict) -> str:
+    """'28 commits ago, committed 8 Nov 2026, 21:29 WAT'; parts that were not recorded are left out."""
+    n, when = stats.get("commits_since_map"), local_time(stats.get("coverage_map_committed_at"))
+    parts = ([f"{n} commit{'' if n == 1 else 's'} ago"] if n is not None else []) + \
+            ([f"committed {when}"] if when else [])
+    return ", ".join(parts) or "age not recorded"
+
+
 PRODUCT = "RiskRank: Regression-Test-Prioritisation Dashboard"  # one name on the tab, the login page and the heading (walkthrough HD-6)
 
 
@@ -160,7 +181,8 @@ def main() -> None:
     # keep the heading levels (HD-8) but at dashboard sizes, and tiles that fit their values (L-4)
     st.markdown("<style>h1 {font-size: 1.75rem !important; padding-top: 0.2rem !important} "
                 "h2 {font-size: 1.3rem !important} h3 {font-size: 1.08rem !important} "
-                "[data-testid='stMetricValue'] {font-size: 1.15rem !important; white-space: normal !important}"
+                "[data-testid='stMetricValue'], [data-testid='stMetricValue'] * {font-size: 1.15rem !important; "
+                "white-space: normal !important; overflow: visible !important; text-overflow: clip !important}"
                 "</style>", unsafe_allow_html=True)
     user = login()
     db = store(os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
@@ -217,8 +239,7 @@ def main() -> None:
     t[0].metric("Build escalated", {True: "yes", False: "no"}.get(run["escalated"], "not assessed")
                 if run["jit_status"] == "assessed" else str(run["jit_status"] or "not assessed"))
     t[1].metric("Pipeline status", str(run["status"] or "unknown"))
-    age = ((run.get("detail") or {}).get("stats") or {}).get("commits_since_map")
-    t[2].metric("Coverage map age", "unknown" if age is None else f"{age} commit{'' if age == 1 else 's'}")
+    t[2].metric("Coverage map age", map_age(((run.get("detail") or {}).get("stats") or {})))
     t[3].metric("Pushed commit", str(run["commit_after"] or "")[:7] or "–")
     # three labelled sections, each region in a bordered card (L-1, L-2); the settings bar sits in the
     # section it controls (L-5)
@@ -408,7 +429,7 @@ def main() -> None:
                                + "so the plan starts with the tests of the next-ranked modules. Every test still runs.")
                 age = stats.get("commits_since_map")
                 if age is not None and age >= 10:
-                    st.warning(f"The coverage map is {age} commits old: tests for code added since then are not mapped.")
+                    st.warning(f"The coverage map is old ({map_age(stats)}): tests for code added since then are not mapped.")
                 # ranked and unranked tests apart (T-4); no "None" cells (T-5); status pinned on the left (T-6);
                 # tables sized to their rows so the page, not the table, scrolls (T-7); wide test column (T-8)
                 fit = lambda n: min(35 * (n + 1) + 3, 528)  # short tables in full; long ones capped at 14 rows
@@ -439,7 +460,7 @@ def main() -> None:
                 zero = trailing.get("zero_size_only", 0)
                 st.markdown(
                     f"Coverage map at commit `{str(run.get('coverage_map_commit') or 'unknown')[:7]}`"
-                    + (f" ({stats['commits_since_map']} commits ago)" if stats.get("commits_since_map") is not None else "")
+                    + f" ({map_age(stats)})"
                     + f" · **{len(missing)}** ranked module{'' if len(missing) == 1 else 's'} not in the map"       # T-9
                     + (f" ({', '.join(missing)})" if missing else "")
                     + f" · of the {len(tp)} tests, {len(rest)} {'is' if len(rest) == 1 else 'are'} unranked: {trailing.get('no_ranked_module', 0)} exercise "

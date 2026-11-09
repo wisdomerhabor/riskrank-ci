@@ -152,16 +152,21 @@ def run(a) -> dict:
         coverage, map_meta = {t: set(m) for t, m in cm["tests"].items()}, cm.get("meta", {})
     else:
         return default_order(a.out, tests, "Coverage map unavailable.", s)
-    since = None
+    since = committed = None
     if map_meta.get("commit"):
         try:
             since = int(git(a.repo, "rev-list", "--count", f"{map_meta['commit']}..{a.after}").strip())
         except subprocess.CalledProcessError:
             since = None
+        try:  # the map's own date, so "N commits ago" can carry a time (dashboard)
+            committed = git(a.repo, "show", "-s", "--format=%cI", map_meta["commit"]).strip() or None
+        except subprocess.CalledProcessError:
+            committed = None
     plan_t0 = time.perf_counter()
     tp = build_plan(ranked_pairs, zero, coverage, tests, durations=map_meta.get("durations", {}),
                     map_commit=map_meta.get("commit"), commits_since_map=since,
-                    map_age_intervals=map_meta.get("age_intervals"))
+                    map_age_intervals=map_meta.get("age_intervals"), map_committed_at=committed,
+                    map_collected_at=map_meta.get("collected_at"))
     plan_seconds = time.perf_counter() - plan_t0
 
     # ---- commit level: the risk summary and build escalation (FR8, FR16)
