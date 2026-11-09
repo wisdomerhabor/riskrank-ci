@@ -315,7 +315,7 @@ def main() -> None:
     elif run["status"] == "partial":
         st.warning("Partial run: module plan built; commit-level risk not assessed.")
     if run["stale_map"]:
-        st.warning("The coverage map is over two refresh intervals old; the plan still used it.")
+        st.warning("The coverage map is overdue for a refresh. The plan still used it, so recent code may have no mapped tests.")
 
     # status (L-3, L-4) is the Build decision block above the tabs: a pill plus labelled rows
     # three labelled sections, each region in a bordered card (L-1, L-2); the settings bar sits in the
@@ -359,8 +359,8 @@ def main() -> None:
                     st.info(f"**Preview**: Flagged uses threshold {threshold:.2f}; the pipeline's escalation "
                             f"used {stored['risk_threshold']:.2f} from `riskrank.yml`.")
             elif preview:
-                st.info("**Preview** on the stored scores. The pipeline still uses `riskrank.yml`; "
-                        "edit it to apply these settings.")
+                st.info("**Preview only:** this ranking uses your settings, not the pipeline's. "
+                        "To make them permanent, edit `riskrank.yml`.")
             else:
                 st.caption("These settings match `riskrank.yml` for this build.")                     # S-1
 
@@ -480,7 +480,7 @@ def main() -> None:
                                                        key=pick_key))
                         if row_now is None and sel == 0:
                             st.caption("No row selected: explaining rank 1.")              # R-6
-                        st.caption(f"Flagged = risk above {threshold:.2f}. Unmapped = no mapped test exercises the module"
+                        st.caption(f"Flagged = risk above the {threshold:.2f} threshold. Unmapped = no mapped test exercises the module"
                                    + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else "."))
                     else:
                         st.info("No source module changed, so nothing was ranked. All tests ran in test-name order.")
