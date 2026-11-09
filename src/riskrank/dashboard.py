@@ -106,7 +106,7 @@ def facts(rows: list[tuple[str, str | None]], title: str | None = None,
     if title:
         pill = f' <span class="rr-pill rr-{status[0]}">{html.escape(status[1])}</span>' if status else ""
         head = f'<div class="rr-t">{html.escape(title)}{pill}</div>'
-    body = "".join(f'<div class="rr-k">{html.escape(k)}</div><div class="rr-v">{_md(v)}</div>'
+    body = "".join(f'<div class="rr-k">{html.escape(k)}</div><div class="rr-c">:</div><div class="rr-v">{_md(v)}</div>'
                    for k, v in rows if v not in (None, ""))
     st.markdown(f'<div class="rr-facts">{head}<div class="rr-grid">{body}</div></div>', unsafe_allow_html=True)
 
@@ -124,8 +124,8 @@ def escalation_facts(run: dict, commits: pd.DataFrame) -> tuple[tuple[str, str],
     top = inside["p"].max() if len(inside) else None
     yes = bool(run["escalated"])
     value = ("**Yes**" if yes else "**No**") + ("" if top is None else
-             f": highest commit-level risk **{top:.4f}** {'exceeds' if top > thr else 'does not exceed'} "
-             f"threshold **{thr:.2f}**")
+             f" (highest commit-level risk **{top:.4f}** {'exceeds' if top > thr else 'does not exceed'} "
+             f"threshold **{thr:.2f}**)")
     return (("warn", "Escalated") if yes else ("ok", "Not escalated")), [
         ("Escalation", value),
         ("Decided by", "the pipeline, using the threshold in `riskrank.yml`"),
@@ -148,10 +148,10 @@ def status_css(v) -> str:
     return STATUS_CSS.get(v, "")
 
 
-def risk_column(digits: int = 2) -> st.column_config.ProgressColumn:
+def risk_column(digits: int = 2, width="medium") -> st.column_config.ProgressColumn:
     """The calibrated risk as a number with a bar on the fixed 0–1 scale (bars compare across builds)."""
     return st.column_config.ProgressColumn("Risk score", format=f"%.{digits}f", min_value=0.0, max_value=1.0,
-                                           width="medium", help="Calibrated probability that the module or commit is "
+                                           width=width, help="Calibrated probability that the module or commit is "
                                                                 "defect-prone, on a 0–1 scale")
 
 
@@ -233,16 +233,18 @@ def main() -> None:
                 "white-space: normal !important; overflow: visible !important; text-overflow: clip !important}"
                 ".rr-facts {margin: 0.15rem 0 0.9rem} "
                 ".rr-t {font-weight: 600; font-size: 0.98rem; margin-bottom: 0.45rem} "
-                ".rr-grid {display: grid; grid-template-columns: max-content 1fr; column-gap: 1.25rem; "
+                ".rr-grid {display: grid; grid-template-columns: max-content auto 1fr; column-gap: 0.6rem; "
                 "row-gap: 0.32rem; align-items: baseline} "
-                ".rr-k {font-size: 0.72rem; letter-spacing: 0.07em; text-transform: uppercase; color: #6b7280; "
-                "white-space: nowrap} "
+                ".rr-k {font-size: 0.9rem; color: #6b7280; white-space: nowrap} "
+                ".rr-c {color: #9ca3af} "
                 ".rr-v {font-size: 0.95rem; line-height: 1.45} "
                 ".rr-v code {font-size: 0.85rem; white-space: normal; overflow-wrap: anywhere} "
                 ".rr-pill {display: inline-block; font-size: 0.74rem; font-weight: 600; padding: 0.08rem 0.6rem; "
                 "border-radius: 999px; margin-left: 0.5rem; vertical-align: 0.1rem} "
                 ".rr-warn {background: #fdecd2; color: #8a4b00} .rr-ok {background: #e0f2e6; color: #1e6b3a} "
-                ".rr-info {background: #eef1f5; color: #44505f}"
+                ".rr-info {background: #eef1f5; color: #44505f} "
+                "[data-testid='stColumn']:has(.st-key-explain-pane) {position: sticky; top: 4.5rem; align-self: flex-start; "
+                "z-index: 1}"
                 "</style>", unsafe_allow_html=True)
     user = login()
     db = store(os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
@@ -278,8 +280,14 @@ def main() -> None:
     with top_l:
         st.title(PRODUCT)
         pill, esc_rows = escalation_facts(run, commits_this)
-        facts([(f"{'Commit' if view_is_commits else 'Module'}-level model", f"`{shown_model}` (calibrated)")]
-              + esc_rows + [("Signed in", f"**{user}**")],  # the pushed commit is the tile below
+        # the status tiles live here now (feedback 9 Nov); "Build escalated" was a third copy of the pill and
+        # the Escalation row, so it went rather than moved
+        facts([("Pushed commit", f"`{str(run['commit_after'] or '')[:7] or '–'}`"),
+               (f"{'Commit' if view_is_commits else 'Module'}-level model", f"`{shown_model}` (calibrated)"),
+               ("Pipeline status", str(run["status"] or "unknown"))]
+              + esc_rows
+              + [("Coverage map age", map_age(((run.get("detail") or {}).get("stats") or {}))),
+                 ("Signed in", f"**{user}**")],
               title="Build decision", status=pill)
     corpus_note = {False: run["transferred"], True: (run.get("detail") or {}).get("commit_transferred", True)}
     if corpus_note[view_is_commits]:
@@ -295,13 +303,7 @@ def main() -> None:
     if run["stale_map"]:
         st.warning("The coverage map is more than two refresh intervals old. The plan was still built from it.")
 
-    # status tiles that stay above the tabs (walkthrough L-3, L-4)
-    t = st.columns(4)
-    t[0].metric("Build escalated", {True: "yes", False: "no"}.get(run["escalated"], "not assessed")
-                if run["jit_status"] == "assessed" else str(run["jit_status"] or "not assessed"))
-    t[1].metric("Pipeline status", str(run["status"] or "unknown"))
-    t[2].metric("Coverage map age", map_age(((run.get("detail") or {}).get("stats") or {})))
-    t[3].metric("Pushed commit", str(run["commit_after"] or "")[:7] or "–")
+    # status (L-3, L-4) is the Build decision block above the tabs: a pill plus labelled rows
     # three labelled sections, each region in a bordered card (L-1, L-2); the settings bar sits in the
     # section it controls (L-5)
     tab_build, tab_plan, tab_off = st.tabs(["This build: ranked changes", "Test plan the pipeline ran",
@@ -349,7 +351,9 @@ def main() -> None:
                 st.caption("These settings match `riskrank.yml` as recorded for this build.")                     # S-1
 
             # ---------------------------------------------------------------- ranked plan + explanation
-            left, right = st.container(), st.container()  # stacked: the table needs the full width (feedback 9 Nov)
+            left, right_col = st.columns([2, 1])
+            # the explanation sits beside the table and stays in view while the page scrolls (feedback 9 Nov)
+            right = right_col.container(key="explain-pane")
             if commit_view:
                 with left:
                     st.markdown("## Stored commit risk scores (historical, not a live ranking)")
@@ -443,8 +447,7 @@ def main() -> None:
                         order = st.session_state.setdefault("rank-order", 0)
                         ev = st.dataframe(styled, on_select="rerun", selection_mode="single-row", hide_index=True,
                                           width="stretch", key=f"modules-{order}", column_config={
-                                              "Risk score": risk_column(),
-                                              "Module": st.column_config.TextColumn(width="large"),
+                                              "Risk score": risk_column(width="small"),
                                               "LOC": st.column_config.NumberColumn(format="%d", help="Lines of code")})
                         if st.button("Reset to rank order", help="Clears any column sorting and the row selection; "
                                                                   "# is always the rank (R-10, R-6)"):

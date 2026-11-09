@@ -30,7 +30,8 @@ def text(at):
 def plain(at):
     """The page text with the labelled-rows HTML flattened: tags become single spaces."""
     import re
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text(at)))
+    flat = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text(at)))
+    return flat.replace(" : ", " ").replace(" )", ")")  # the colon column; a bold value before ")"
 
 
 def sign_in(at, user, pw):
@@ -53,7 +54,7 @@ def test_regions_after_login(env):
     assert not at.exception, at.exception
     t = text(at)
     p = plain(at)
-    assert "Signed in qa-lead" in p and "Escalation Yes :" in p and 'rr-pill rr-warn">Escalated' in t  # labelled rows
+    assert "Signed in qa-lead" in p and "Escalation Yes (highest commit-level risk 0.6000 exceeds threshold 0.50)" in p and 'rr-pill rr-warn">Escalated' in t  # labelled rows
     warnings = " ".join(w.value for w in at.warning)
     assert "Scores transferred:" in warnings                                  # a banner, not body text (HD-3)
     assert "threshold 0.50" in p and "Decided by the pipeline, using the threshold in riskrank.yml" in p           # unrounded value vs threshold (HD-1/2)
@@ -196,8 +197,9 @@ def test_layout_low_severity_fixes(env):
     """Walkthrough layout findings L-1 to L-5: status tiles above three labelled tabs of bordered cards."""
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
-    assert [m.label for m in at.metric] == ["Build escalated", "Pipeline status", "Coverage map age", "Pushed commit"]
-    assert at.metric[0].value == "yes" and at.metric[2].value == "4 commits ago"                              # L-4
+    p = plain(at)
+    assert not at.metric and "Pushed commit a1" in p and "Pipeline status complete" in p                    # L-4, 9 Nov
+    assert "Coverage map age 4 commits ago" in p
     assert [x.label for x in at.tabs] == ["This build: ranked changes", "Test plan the pipeline ran",
                                           "Offline model evaluation"]                                        # L-2, L-3
 
@@ -215,7 +217,7 @@ def test_coverage_map_age_carries_a_date(env):
     assert s.backfill_map_dates("o/r", {"cm1": "2026-01-01T00:00:00Z"}) == 0     # never overwrites
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
-    assert at.metric[2].value == "4 commits ago, committed 8 Nov 2026, 10:00 WAT"
+    assert "Coverage map age 4 commits ago, committed 8 Nov 2026, 10:00 WAT" in plain(at)
     assert "Map age 4 commits ago, committed 8 Nov 2026, 10:00 WAT" in plain(at)
 
 
