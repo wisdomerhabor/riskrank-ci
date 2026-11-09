@@ -41,11 +41,13 @@ def main() -> None:
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--version", default="flask-module-v1")
+    ap.add_argument("--families", nargs="+", default=list(FAMILIES), choices=list(FAMILIES),
+                    help="candidate families; flask-module-v3 uses lr rf lgbm, the set v2 was chosen from")
     a = ap.parse_args()
     cfg = load_config()
     fork = pd.Timestamp(cfg["deployment_model"]["fork_point"], tz="UTC")
     base, calib = frames(fork, cfg["module_snapshots"]["observation_window_months"])
-    tuned = {f: tune(base, FEATURES, f, seconds=a.seconds, seed=a.seed) for f in FAMILIES}
+    tuned = {f: tune(base, FEATURES, f, seconds=a.seconds, seed=a.seed) for f in a.families}
     best = max(tuned, key=lambda f: tuned[f].cv_aucpr)
     mv = fit_final(base, calib, FEATURES, tuned[best], seed=a.seed)
     meta = registry.publish(
