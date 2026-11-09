@@ -74,10 +74,9 @@ def main() -> None:
     test = held_out(cfg)
     p, raw = mv.score(test)
     test["p"], test["raw"], test["p_uncal"] = p, raw, uncalibrated_probability(mv.model, raw)
-    commits = history(cfg["history_end_commit"])
     frames, per_snapshot = [], {}
     for snap, g in test.groupby("snapshot"):
-        when = last_change(commits, g["module"].tolist(), snap)
+        when = last_change(history(g["tree"].iloc[0]), g["module"].tolist(), snap)  # visible at snap only
         f = pd.DataFrame({"id": g["module"], "p": g["p"], "raw": g["raw"], "p_uncal": g["p_uncal"],
                           "size": g["size"], "label": g["label"].astype(bool),
                           "when": g["module"].map(when)}).reset_index(drop=True)

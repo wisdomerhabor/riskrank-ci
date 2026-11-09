@@ -216,7 +216,7 @@ def main() -> None:
             continue
         p, raw = mv.score(feats)
         frame = pd.DataFrame({"id": feats["id"].to_numpy(), "p": p, "raw": raw, "size": feats["size"].to_numpy()})
-        last = last_change(commits, frame["id"].tolist(), info["when"])
+        last = last_change(history(sha), frame["id"].tolist(), info["when"])  # the anchor's own history
         row = {"anchor": sha, "when": str(info["when"]), "fixes": len(info["fixes"]),
                "blamed_removed_untouched": len(blamed_all - ranked_ids)} | evaluate_anchor(frame, blamed, last)
         results.append(row)

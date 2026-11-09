@@ -46,7 +46,7 @@ def _exists(repo: str, sha: str, path: str) -> bool:
 
 def build(repo: str = REPO) -> pd.DataFrame:
     cfg = load_config()
-    hist = History(repo, cfg["history_end_commit"])
+    hist = History(repo, cfg["history_end_commit"], ancestors_only=True)  # no later-merged history
     fixes = inducing_fixes()
     rows, py2 = [], []
     for c in hist.commits:

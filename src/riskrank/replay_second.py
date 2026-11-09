@@ -364,7 +364,6 @@ def phase_rank() -> None:
     cfg = load_config()
     screened = [json.loads(line) for line in open(os.path.join(OUT, "screen.jsonl"))]
     mv, model_check = validation_model()
-    commits = history(cfg["history_end_commit"])
     keywords = cfg["bug_fix_rule"]["keywords"]
     months = cfg["module_snapshots"]["process_period_months"]
     results = []
@@ -382,7 +381,7 @@ def phase_rank() -> None:
         p, raw = mv.score(feats)
         frame = pd.DataFrame({"id": feats["id"].to_numpy(), "p": p, "raw": raw, "size": feats["size"].to_numpy()})
         when = pd.Timestamp(rec["anchor_date"]).tz_convert("UTC") + pd.Timedelta(seconds=1)  # up to and including
-        last = last_change(commits, frame["id"].tolist(), when)
+        last = last_change(history(anchor), frame["id"].tolist(), when)  # the anchor's own history
         rankings = {
             "system": rank(frame, "default")["id"].tolist(),
             "largest_first": frame.sort_values(["size", "id"], ascending=[False, True], kind="mergesort")["id"].tolist(),

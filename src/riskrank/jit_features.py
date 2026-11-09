@@ -15,7 +15,9 @@ commits and compared with the published values (`python -m riskrank.nfr12`). Cho
   arexp         sum over the author's prior commits of 1 / (1 + whole years since that commit)
   asexp         the author's prior commits touching any subsystem this commit touches
 History is the repository's main-branch history (no merges) strictly before the commit's author
-time; authors are identified by lower-cased e-mail address.
+time; authors are identified by lower-cased e-mail address. With ancestors_only=True a prior commit
+must also be an ancestor of the commit, which is all a CI hook reading history from that commit can
+see: a commit authored earlier on a branch merged later is excluded (riskrank.leakage_check).
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ class Commit:
 class History:
     """Main-branch, non-merge history of one repository, indexed for fast per-commit queries."""
 
-    def __init__(self, repo: str, rev: str = "HEAD"):
+    def __init__(self, repo: str, rev: str = "HEAD", ancestors_only: bool = False):
         out = subprocess.run(
             ["git", "-C", repo, "log", rev, "--no-merges", "--no-renames", "--numstat",
              "--format=\x1e%H%x00%ae%x00%at"],
@@ -57,6 +59,20 @@ class History:
             commits.append(Commit(h, ae.lower(), int(at), files))
         commits.sort(key=lambda c: c.t)
         self.commits = commits
+        self.ancestors: dict[str, int] | None = None
+        if ancestors_only:  # bitset of each commit's ancestors, over the full DAG (merges included)
+            dag = subprocess.run(["git", "-C", repo, "rev-list", "--topo-order", "--reverse", "--parents", rev],
+                                 capture_output=True, text=True, check=True).stdout.split("\n")
+            bit: dict[str, int] = {}
+            self.ancestors = {}
+            for line in filter(None, dag):
+                sha, *parents = line.split()
+                bit[sha] = 1 << len(bit)
+                acc = 0
+                for q in parents:
+                    acc |= self.ancestors[q] | bit[q]
+                self.ancestors[sha] = acc
+            self._bit = bit
         self.by_sha = {c.sha: c for c in commits}
         self.times = [c.t for c in commits]
         self.file_hist: dict[str, list[Commit]] = defaultdict(list)
@@ -75,6 +91,14 @@ def _before(seq: list[Commit], t: int) -> list[Commit]:
     return seq[: bisect_left([x.t for x in seq], t)]
 
 
+def _prior(h: "History", seq: list[Commit], c: Commit) -> list[Commit]:
+    earlier = _before(seq, c.t)
+    if h.ancestors is None:
+        return earlier
+    anc = h.ancestors[c.sha]
+    return [x for x in earlier if anc & h._bit[x.sha]]
+
+
 def compute(c: Commit, h: History) -> dict[str, float]:
     files = c.files
     paths = sorted({p for p, _, _ in files})
@@ -84,11 +108,11 @@ def compute(c: Commit, h: History) -> dict[str, float]:
     subsystems = {p.split("/", 1)[0] for p in paths}
     devs, nuc, age = [], [], []
     for p in paths:
-        prior = _before(h.file_hist.get(p, []), c.t)
+        prior = _prior(h, h.file_hist.get(p, []), c)
         devs.append(len({x.author for x in prior}))
         nuc.append(len(prior))
         age.append((c.t - prior[-1].t) / 86400 if prior else 0.0)
-    mine = _before(h.author_hist.get(c.author, []), c.t)
+    mine = _prior(h, h.author_hist.get(c.author, []), c)
     n = max(1, len(paths))
     return {
         "la": la, "ld": ld, "nf": len(paths),

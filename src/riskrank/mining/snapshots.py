@@ -181,7 +181,9 @@ def build() -> pd.DataFrame:
     for s in snaps:
         tree = git("rev-list", "-1", f"--before={s.isoformat()}", cfg["history_end_commit"]).strip()
         modules = [p for p in git("ls-tree", "-r", "--name-only", tree).splitlines() if is_source(p, cfg)]
-        proc = process_window(commits, modules, s - pd.DateOffset(months=period), s, keywords)
+        # Features read only the tree's own history: a commit dated before s on a branch merged after s
+        # was not visible at s (riskrank.leakage_check). Labels below may look forward and use all commits.
+        proc = process_window(history(tree), modules, s - pd.DateOffset(months=period), s, keywords)
         hi = s + pd.DateOffset(months=months)
         window = [fx for fx in fixes if s < fx["when"] <= hi and fx["inducing_when"] <= s]
         defective = forward_paths(commits, modules, s, window)
