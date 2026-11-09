@@ -230,7 +230,7 @@ def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dic
     if raw is not None and not pd.isna(raw) and not top_only:                                         # E-4
         total = sum(c["contribution"] for c in codes)
         scale = (record.get("explanation") or {}).get("scale", "raw")
-        st.caption(f"How the score adds up: an average module scores {raw - total:.3f}; the bars add {total:+.3f}, "
+        st.caption(f"How the score adds up: base score {raw - total:.3f} (an average module); the bars add {total:+.3f}, "
                    f"giving {raw:.3f} ({scale}). Calibration turns this into the risk {p:.2f}.")
     attribution = (record.get("explanation") or {}).get("attribution", "")
     note = next((v for k, v in ATTRIBUTION_NOTES.items() if k in attribution.lower()), "")

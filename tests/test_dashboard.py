@@ -136,7 +136,7 @@ def test_explanation_panel_low_severity_fixes(env):
     t = text(at)
     assert "(default; select a row to change)" in t                                          # E-6
     assert "dark blue raises risk, tan lowers it" in t                                                # E-7
-    assert "giving 0.900" in t and "Calibration turns this into the risk 0.70" in t          # E-4
+    assert "How the score adds up: base score" in t and "giving 0.900" in t and "Calibration turns this into the risk 0.70" in t          # E-4
     assert "Attribution: linear (exact): each bar is the feature" in t                                     # E-9
 
 
