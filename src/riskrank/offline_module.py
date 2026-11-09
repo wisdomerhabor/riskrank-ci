@@ -64,10 +64,12 @@ def curves(frames: list[pd.DataFrame]) -> tuple[dict[str, list], np.ndarray]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("RISKRANK_DB", "sqlite:///riskrank.db"))
+    ap.add_argument("--model", help="evaluate another registry version under the same pre-registered design "
+                                    "(default: offline_evaluation.model)")
     a = ap.parse_args()
     cfg = load_config()
     oe = cfg["offline_evaluation"]
-    version = oe["model"]
+    version = a.model or oe["model"]
     meta = json.load(open(f"registry/{version}/model.json"))
     _, mv, _ = registry.load(f"registry/{version}", meta["bundle_sha256"])
 
