@@ -16,12 +16,15 @@ on:
       resume_run:
         description: id of an earlier benchmarks run whose manifest and finished trials to reuse (optional)
         default: ""
+      jobs:
+        description: workers per runner (1 for a resume of the largest pieces; a runner has 16 GB)
+        default: "3"
 permissions:
   contents: read
   actions: read
 env:
   PIN: scipy==1.18.1 threadpoolctl==3.8.0 joblib==1.6.0   # beside requirements.txt: the workstation's versions
-  JOBS: "3"                                              # workers per runner (memory: deep forests on 250k rows)
+  JOBS: ${{ inputs.jobs }}                               # workers per runner (memory: deep forests on 250k rows)
   GH_TOKEN: ${{ github.token }}
 jobs:
   plan:
