@@ -58,14 +58,19 @@ def store(url: str) -> Store:
 
 
 def escalation_text(run: dict, commits: pd.DataFrame) -> str:
+    """The pipeline's escalation decision, with the deciding value unrounded beside the threshold it was
+    compared with (walkthrough HD-1, HD-2, HD-10). The settings bar does not change it."""
     status = run["jit_status"]
     if status == "not configured":
         return "Build escalation: not configured"
     if status != "assessed":
         return f"Build escalated: not assessed ({status})"
-    top = commits["p"].max() if len(commits) else None
-    return f"Build escalated: **{'yes' if run['escalated'] else 'no'}**" + (
-        f" (highest commit risk {top:.2f})" if top is not None else "")
+    inside = commits[commits["in_training_range"].astype(bool)] if len(commits) else commits
+    thr = float(run["risk_threshold"] or 0.5)
+    top = inside["p"].max() if len(inside) else None
+    cmp = "" if top is None else f" (highest commit risk {top:.4f} {'>' if top > thr else '≤'} threshold {thr:.2f})"
+    return (f"Build escalated: **{'yes' if run['escalated'] else 'no'}**{cmp} · decided by the pipeline with "
+            "`riskrank.yml`'s threshold, counting only commits whose features lie inside the model's training range")
 
 
 def reason_chart(codes: list[dict]) -> alt.Chart:
@@ -74,10 +79,10 @@ def reason_chart(codes: list[dict]) -> alt.Chart:
     d["effect"] = d["direction"].map({"raised": "raises risk", "lowered": "lowers risk"})
     return alt.Chart(d).mark_bar().encode(
         x=alt.X("contribution:Q", title="contribution to the uncalibrated score"),
-        y=alt.Y("feature:N", sort=None, title=None),
+        y=alt.Y("feature:N", sort=None, title=None, axis=alt.Axis(labelLimit=320, labelOverlap=False)),
         color=alt.Color("effect:N", scale=alt.Scale(domain=["raises risk", "lowers risk"],
                                                     range=["#1f3a5f", "#b5834c"]), legend=None),
-        tooltip=["feature", "value", "contribution", "effect"]).properties(height=34 * len(d) + 20)
+        tooltip=["feature", "value", "contribution", "effect"]).properties(height=44 * len(d) + 30)
 
 
 def explanation_panel(title: str, p: float, rank_no: int | None, codes: list[dict], model: dict | None) -> None:
@@ -123,12 +128,17 @@ def main() -> None:
     module_model = run["module_model"] or (((run.get("detail") or {}).get("settings") or {}).get("models") or {}) \
         .get("module", {}).get("version")
     model = db.model(module_model)
+    view_is_commits = st.session_state.get("granularity") == "commits"
+    shown_model = (run["jit_model"] or "none") if view_is_commits else (module_model or "none")
     with top_l:
         st.markdown("## Regression-Test-Prioritisation Dashboard")
-        transferred = " · **scores transferred** (model applied outside its training corpus)" if run["transferred"] else ""
-        st.markdown(f"Project: `{project}` · Model: `{module_model or 'none'}` (calibrated){transferred} · "
-                    f"Build run {run['build_ref']} · commit `{str(run['commit_after'] or '')[:7]}`")
+        st.markdown(f"Project: `{project}` · {'Commit' if view_is_commits else 'Module'} model: `{shown_model}` "
+                    f"(calibrated) · Build run {run['build_ref']} · commit `{str(run['commit_after'] or '')[:7]}`")
         st.markdown(f"{escalation_text(run, commits_this)} · signed in: **{user}**")
+    corpus_note = {False: run["transferred"], True: (run.get("detail") or {}).get("commit_transferred", True)}
+    if corpus_note[view_is_commits]:
+        st.warning(f"**Scores transferred:** `{shown_model}` was trained on another corpus "
+                   f"({'Java projects, ApacheJIT' if view_is_commits else 'pallets/flask'}), not on `{project}`.")
     if st.sidebar.button("Sign out"):
         st.session_state.clear()
         st.rerun()
@@ -143,7 +153,7 @@ def main() -> None:
     stored = {"ranking_key": run["ranking_key"], "budget_unit": run["budget_unit"],
               "budget": float(run["budget"] or 20), "risk_threshold": float(run["risk_threshold"] or 0.5)}
     c = st.columns([1.2, 1.4, 1.2, 1.2, 1.2])
-    granularity = c[0].selectbox("Granularity", ["modules", "commits"])
+    granularity = c[0].selectbox("Granularity", ["modules", "commits"], key="granularity")
     commit_view = granularity == "commits"
     keys = {"calibrated risk": "default", "effort-normalised": "effort"}
     units = {"modules (artefacts)": "artefacts", "lines of code": "lines"}
@@ -171,17 +181,28 @@ def main() -> None:
                         + ("(no just-in-time model is configured)." if run["jit_status"] == "not configured" else "."))
                 sel = None
             else:
-                view = commits.assign(commit=commits["commit"].str[:10], flagged=commits["p"] > threshold,
-                                      outside_training_range=~commits["in_training_range"].astype(bool))
-                ev = st.dataframe(view[["commit", "p", "flagged", "outside_training_range", "created", "model_version"]]
-                                  .rename(columns={"p": "risk", "created": "scored in build at"}), on_select="rerun", selection_mode="single-row",
-                                  hide_index=True, width="stretch", key="commits")
-                sel = ev.selection.rows[0] if ev.selection.rows else 0
-                st.caption("Commit scores come from a model trained on Java (ApacheJIT) and are labelled transferred. "
-                           "Escalation counts only commits inside the training range.")
+                every = st.checkbox("Show commits from every build", value=False, key="all_builds")
+                shown = (commits if every else commits_this).reset_index(drop=True)
+                if shown.empty:
+                    st.info("This build scored no commit. Tick the box above to see earlier builds.")
+                    sel = None
+                else:
+                    view = shown.assign(commit=shown["commit"].str[:10], risk=shown["p"].map(lambda v: f"{v:.4f}"),
+                                        flagged=shown["p"] > threshold,
+                                        features_outside_training_range=~shown["in_training_range"].astype(bool))
+                    ev = st.dataframe(view[["commit", "risk", "flagged", "features_outside_training_range", "created",
+                                            "model_version"]].rename(columns={
+                                                "created": "scored in build at", "model_version": "model",
+                                                "features_outside_training_range": "features outside training range"}),
+                                      on_select="rerun", selection_mode="single-row", hide_index=True, width="stretch",
+                                      key="commits")
+                    sel = ev.selection.rows[0] if ev.selection.rows else 0
+                st.caption("Two different checks: the model was trained on another corpus (Java, ApacheJIT), and, "
+                           "separately, a commit's features may fall outside the range seen in training. Escalation "
+                           "counts only commits whose features are inside that range.")
         with right:
             if sel is not None:
-                r = commits.iloc[sel]
+                r = shown.iloc[sel]
                 explanation_panel(r["commit"][:10], r["p"], None, r["reason_codes"] or [], db.model(r["model_version"]))
     else:
         if len(ranking):
@@ -199,10 +220,15 @@ def main() -> None:
             st.markdown(f"{(run.get('detail') or {}).get('modules_touched', len(r))} modules touched · "
                         f"{budget:g}% budget ({'of lines' if unit == 'lines' else 'of modules'}) covers "
                         + (f"ranks 1–{last_in}" if k else "no module")
-                        + (f" · realised share {share:.1%}" if share is not None else ""))
+                        + (f" · realised share {share:.1%}" if share is not None else "")
+                        + (" (the module at the boundary is included whole, so the share can exceed the budget)"
+                           if share is not None and unit == "lines" and share > budget / 100 + 1e-9 else ""))
             sel = None
             if len(r):
-                show = r[["#", "id", "p", "size", "in_budget", "flagged"]].rename(
+                unmapped = set(((run.get("detail") or {}).get("stats") or {}).get("ranked_modules_missing_from_map", []))
+                r["tests mapped"] = ["no tests mapped" if m in unmapped else "yes" for m in r["id"]]
+                r["size"] = r["size"].round().astype("Int64")
+                show = r[["#", "p", "in_budget", "flagged", "tests mapped", "id", "size"]].rename(
                     columns={"id": "module", "p": "risk", "size": "lines of code", "in_budget": "in budget"})
                 if key == "effort":
                     show.insert(4, "lower-bounded risk per 1,000 lines",
@@ -211,7 +237,10 @@ def main() -> None:
                                                        else "" for _ in row], axis=1).format({"risk": "{:.2f}"})
                 ev = st.dataframe(styled, on_select="rerun", selection_mode="single-row", hide_index=True,
                                   width="stretch", key="modules")
-                sel = ev.selection.rows[0] if ev.selection.rows else 0
+                clicked = ev.selection.rows[0] if ev.selection.rows else 0
+                names = [f"{int(n)}. {m}" for n, m in zip(r["#"], r["id"])]
+                sel = names.index(st.selectbox("Explain module (keyboard: Tab here, then arrow keys)", names,
+                                               index=clicked, key=f"explain-{run_id}-{key}-{unit}"))
                 st.caption(f"Shaded rows = inside the budget. Flagged = risk above the {threshold:.2f} threshold"
                            + (f"; lower-bounded risk = {1 - Z:.2f} × risk + {Z:.2f}." if key == "effort" else ".")
                            + " Select a row to see its reasons.")
@@ -234,8 +263,23 @@ def main() -> None:
         n_in = int(tp["in_budget"].sum())
         stored_rank = dict(zip(ranking["module"], ranking["rank"]))
         tp["from rank"] = tp["deciding_module"].map(stored_rank).astype("Int64")
-        st.markdown(f"{len(tp)} tests ordered · {n_in} ({n_in / len(tp):.1%} of the suite) inside the "
-                    f"{stored['budget']:g}% budget")
+        unit_word = "of the changed lines" if stored["budget_unit"] == "lines" else "of the changed modules"
+        st.markdown(f"The {stored['budget']:g}% budget ({unit_word}) selects ranks "
+                    + (f"1–{int(ranking.loc[ranking['in_budget'].astype(bool), 'rank'].max())}"
+                       if "in_budget" in ranking and ranking["in_budget"].astype(bool).any() else "none")
+                    + f" · tests that exercise them: **{n_in}** of {len(tp)} ({n_in / len(tp):.1%} of the suite)")
+        missing_now = (stats.get("ranked_modules_missing_from_map") or [])
+        in_budget_mods = set(ranking.loc[ranking["in_budget"].astype(bool), "module"]) if "in_budget" in ranking else set()
+        if n_in == 0:
+            no_tests = sorted(in_budget_mods & set(missing_now))
+            st.warning("**No test is inside the budget.** "
+                       + (f"The in-budget module{'s' if len(no_tests) > 1 else ''} {', '.join(f'`{m}`' for m in no_tests)} "
+                          "has no test in the coverage map (new or untested code), " if no_tests else
+                          "No test in the coverage map exercises the in-budget modules, ")
+                       + "so the plan starts with the tests of the next-ranked modules. Every test still runs.")
+        age = stats.get("commits_since_map")
+        if age is not None and age >= 10:
+            st.warning(f"The coverage map is {age} commits old: tests for code added since then are not mapped.")
         styled = (tp[["position", "test", "deciding_module", "from rank", "in_budget"]]
                   .rename(columns={"position": "#", "deciding_module": "module that sets its rank",
                                    "in_budget": "in budget"})
@@ -254,9 +298,12 @@ def main() -> None:
             f"{trailing.get('zero_size_only', 0)} excluded for zero size")
 
     # ---------------------------------------------------------------- evaluation panels
+    off = db.latest_offline(module_model)
+    st.markdown("### Offline model evaluation")
+    st.info(f"These panels evaluate `{module_model}` offline on **{(off or {}).get('corpus') or 'its evaluation corpus'}**, "
+            f"not on `{project}`'s builds, and do not change with the settings above.")
     e1 = st.container()  # the cost-effectiveness curve on its own full-width row (walkthrough finding)
     e2, e3 = st.columns(2)
-    off = db.latest_offline(module_model)
     with e1:
         st.markdown("#### Cost-effectiveness (offline, lines-of-code budget)")
         if not off:
@@ -274,8 +321,11 @@ def main() -> None:
                     color=alt.Color("ordering:N", sort=BASELINE_ORDER))
                 rule = alt.Chart(pd.DataFrame({"x": [20]})).mark_rule(color="#b5834c").encode(x="x:Q")
                 st.altair_chart(line + rule, width="stretch")
-            st.markdown(f"Recall at the budget: system **{off['recall']:.3f}**; " + "; ".join(
-                f"{b['baseline']} {b['recall']:.3f}" for b in off["baselines"] if b["recall"] is not None))
+            vals = [("system", off["recall"])] + [(b["baseline"], b["recall"]) for b in off["baselines"]
+                                                   if b["recall"] is not None]
+            best = max(vals, key=lambda v: v[1])
+            st.markdown("Defect recall at the 20% budget: " + " · ".join(f"{n} {v:.1%}" for n, v in vals)
+                        + f" (highest: {best[0]})")
     with e2:
         st.markdown("#### Calibration: predicted against observed")
         bins = ((off or {}).get("detail") or {}).get("reliability", [])

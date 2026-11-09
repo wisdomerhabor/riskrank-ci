@@ -47,8 +47,12 @@ def test_regions_after_login(env):
     assert not at.exception, at.exception
     t = text(at)
     assert "signed in: **qa-lead**" in t and "Build escalated: **yes**" in t
-    assert "scores transferred" in t
+    warnings = " ".join(w.value for w in at.warning)
+    assert "Scores transferred:" in warnings                                  # a banner, not body text (HD-3)
+    assert "threshold 0.50" in t and "decided by the pipeline" in t           # unrounded value vs threshold (HD-1/2)
     assert "Why this risk score?" in t and "Selected: `src/x.py`" in t       # reasons beside the ranking
-    assert "3 tests ordered" in t and "1 (33.3% of the suite)" in t
+    assert "tests that exercise them: **1** of 3 (33.3% of the suite)" in t   # budget's own unit first (T-3)
     assert "commit `cm1`" in t and "**1** ranked module(s) not in the map" in t
-    assert "No offline evaluation is stored" in " ".join(i.value for i in at.info)
+    assert at.selectbox(key=at.selectbox[-1].key).label.startswith("Explain module")  # keyboard path (R-3)
+    infos = " ".join(i.value for i in at.info)
+    assert "No offline evaluation is stored" in infos and "not on `o/r`'s builds" in infos  # corpus banner (O-1)
