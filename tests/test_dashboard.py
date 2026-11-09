@@ -93,12 +93,12 @@ def test_settings_bar_low_severity_fixes(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     t = text(at)
-    assert "match `riskrank.yml` as recorded for this build" in t                                      # S-1
+    assert "These settings match `riskrank.yml` for this build." in t                                      # S-1
     labels = {n.label: n for n in at.number_input}
     budget = next(n for lbl, n in labels.items() if lbl.startswith("Budget (%"))
     assert budget.label in ("Budget (% of changed modules)", "Budget (% of changed lines)")            # S-7
     assert all(n.help for n in at.number_input) and all(b.help for b in at.selectbox[2:5])             # S-2, S-4
-    assert "Valid range 1–100" in t                                                                    # S-3
+    assert "Range 1–100; other values are ignored." in t                                                                    # S-3
     assert "Flagged 1 of 3 modules above the 0.50 threshold" in plain(at)                                                     # S-5
     labels["Risk threshold"].set_value(0.05)
     at = at.run()
@@ -116,7 +116,7 @@ def test_ranked_plan_low_severity_fixes(env):
     assert set(table["Tests mapped"]) <= {"Mapped", "Unmapped"}                                       # feedback 9 Nov  # R-5, R-7
     assert list(table.columns[:4]) == ["#", "Risk score", "Budget", "Flagged"]                              # R-8
     t = text(at)
-    assert "No row selected: the explanation shows rank 1 by default." in t                              # R-6
+    assert "No row selected: explaining rank 1." in t                              # R-6
     assert "Touched 3 modules" in plain(at)
     assert "ranks 1–1" not in t                                                                          # R-12
     assert any(b.label == "Reset to rank order" for b in at.button)                                      # R-10
@@ -134,10 +134,10 @@ def test_explanation_panel_low_severity_fixes(env):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     t = text(at)
-    assert "(shown by default; select a row to change)" in t                                          # E-6
+    assert "(default; select a row to change)" in t                                          # E-6
     assert "dark blue raises risk, tan lowers it" in t                                                # E-7
-    assert "= uncalibrated score 0.900" in t and "calibration maps it to the risk 0.70" in t          # E-4
-    assert "Attribution: linear (exact): for a linear model" in t                                     # E-9
+    assert "giving 0.900" in t and "Calibration turns this into the risk 0.70" in t          # E-4
+    assert "Attribution: linear (exact): each bar is the feature" in t                                     # E-9
 
 
 def test_test_plan_low_severity_fixes(env):
@@ -150,7 +150,7 @@ def test_test_plan_low_severity_fixes(env):
     ranked = next(d for d in tables if "Module that sets its rank" in d.columns)
     assert "None" not in ranked.astype(str).to_numpy()                                                  # T-5
     assert list(ranked.columns[:2]) == ["#", "Budget"]                                               # T-6
-    assert "Unranked tests 1 of the 3" in plain(at) and "excluded for zero size" not in t                  # T-4, T-10
+    assert "Unranked tests 1 of 3" in plain(at) and "excluded for zero size" not in t                  # T-4, T-10
 
 
 def test_commit_view_low_severity_fixes(env):
@@ -162,13 +162,13 @@ def test_commit_view_low_severity_fixes(env):
     assert not at.exception, at.exception
     t = text(at)
     assert "Risk 0.6000" in plain(at)                                                                      # C-5
-    assert "Showing the top" in t and "five largest per commit" in t                                   # C-9
+    assert "features by contribution" in t and "keeps five per commit" in t                                   # C-9
     table = next(d.value for d in at.dataframe if "Commit" in d.value.columns)
     assert set(table["Flagged"]) <= {"Flagged", "Below threshold"}
     assert table["Scored in build at"].str.match(r"^\d{4}-\d\d-\d\d \d\d:\d\d$").all()                 # C-6
     next(n for n in at.number_input if n.label == "Risk threshold").set_value(0.2)
     at = at.run()
-    assert "the flagged column uses threshold 0.20" in " ".join(i.value for i in at.info)              # C-4
+    assert "Flagged uses threshold 0.20" in " ".join(i.value for i in at.info)              # C-4
 
 
 def test_offline_panels_low_severity_fixes(env, monkeypatch):
@@ -187,7 +187,7 @@ def test_offline_panels_low_severity_fixes(env, monkeypatch):
     at = sign_in(AppTest.from_file(APP, default_timeout=30).run(), "qa-lead", "correct horse battery")
     assert not at.exception, at.exception
     t = text(at)
-    assert "a constant forecast of the defect rate, 7.0%, scores 0.065" in t                           # O-6
+    assert "always forecasting the defect rate (7.0%) scores 0.065" in t                           # O-6
     assert "numbers = modules in each bin" in t
     assert "Click a legend entry to isolate its curve" in t                                            # O-4
     assert "the selected build is the larger dark point" in t                                          # O-7
@@ -244,3 +244,14 @@ def test_no_tab_points_at_settings_above():
     import pathlib
     src = pathlib.Path(__file__).parents[1].joinpath("src/riskrank/dashboard.py").read_text()
     assert "settings above" not in src and "preview above" not in src
+
+
+def test_visible_text_carries_no_finding_ids_or_module_s():
+    """Walkthrough finding IDs belong in comments, not on screen; counts are pluralised properly."""
+    import pathlib, re
+    src = pathlib.Path(__file__).parents[1].joinpath("src/riskrank/dashboard.py").read_text()
+    code = "\n".join(l.split("  #")[0] for l in src.splitlines() if not l.lstrip().startswith("#"))
+    assert not re.search(r'"[^"\n]*\((?:R|S|T|E|L|HD)-\d+[^"\n]*"', code.replace('"""', ''))
+    assert "module(s)" not in src and "trailing block" not in code
+    from riskrank.dashboard import plural
+    assert (plural(1, "module"), plural(0, "module"), plural(3, "module")) == ("1 module", "0 modules", "3 modules")
