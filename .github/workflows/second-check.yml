@@ -1,0 +1,44 @@
+# The second bounded check (section 3.10.3) on a Linux runner, where uv can provide CPython 3.7 for the
+# 2018-2019 anchors (it cannot on Apple silicon). Inputs that are not in the repository (the mined Flask
+# fixes and snapshots, and the first check's separation date and validation model record) come from the
+# release asset named by `inputs`, made from the workstation's files by:
+#   tar czf second-check-inputs.tar.gz runs/first_check.json runs/first_check_date.json \
+#       data/mined/flask/bugfixes.json data/mined/flask/modules.csv
+name: second-check
+on:
+  workflow_dispatch:
+    inputs:
+      inputs_release:
+        description: riskrank-ci release holding second-check-inputs.tar.gz
+        default: eval-inputs-20261109
+permissions:
+  contents: read
+env:
+  PIN: scipy==1.18.1 threadpoolctl==3.8.0 joblib==1.6.0 uv==0.13.7
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  second-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13", cache: pip}
+      - run: pip install -r requirements.txt $PIN && pip install --no-deps -e .
+      - name: Inputs and the Flask repository
+        run: |
+          gh release download "${{ inputs.inputs_release }}" -R "$GITHUB_REPOSITORY" -p second-check-inputs.tar.gz
+          tar xzf second-check-inputs.tar.gz && sha256sum runs/first_check*.json data/mined/flask/*
+          git clone -q https://github.com/pallets/flask data/repos/pallets/flask
+          git -C data/repos/pallets/flask config user.email ci@example.invalid
+          git -C data/repos/pallets/flask config user.name ci
+      - run: python -m riskrank.replay_second screen
+      - run: python -m riskrank.replay_second rank
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: second-check
+          path: |
+            runs/second_check/
+            runs/second_check.json
