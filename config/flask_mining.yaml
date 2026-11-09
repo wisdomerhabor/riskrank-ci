@@ -186,6 +186,12 @@ second_check:
   # recorded with this disclosure): where uv cannot provide the Python version, the official python:<version> Docker
   # image provides it (uv finds that interpreter on the search path; every other rule unchanged). Both results are
   # reported: the result under the rule as first written (8 reproduced), and the result with the amendment.
+  # Needed to make that amendment work, found in the 3.6/3.7 runs (same disclosure): for anchors before 28 Feb 2019 the
+  # project's build backend is dated 28 Feb 2019 (uv needs setuptools >= 40.8 to build a setup.py project; later
+  # setuptools cannot build 2017-era setup.py files), with the environment's own setuptools re-installed dated;
+  # Python 3.6 environments are byte-compiled with compileall (uv's compiler needs 3.7). A bug fix under the existing
+  # measurement_tools rule, not an amendment: coverage.py is upgraded to the newest version supporting the anchor's
+  # Python even when the dated test requirements already brought an older one.
   measurement_tools (detail): >-
     coverage.py and a small results plugin (tools/second_check) are installed WITHOUT the date limit, at the newest
     versions supporting the anchor's Python: per-test coverage contexts need coverage 5.0 (Dec 2019), so a dated
