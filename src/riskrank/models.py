@@ -132,7 +132,9 @@ def time_folds(base: pd.DataFrame, n_folds: int = N_FOLDS) -> list[tuple[np.ndar
     for i in range(n_folds):
         tr, va = np.concatenate(chunks[: i + 1]), chunks[i + 1]
         y_tr, y_va = base["label"].to_numpy()[tr], base["label"].to_numpy()[va]
-        if y_tr.min() != y_tr.max() and y_va.any():  # both classes to train, a defect to find
+        # Two of each class to train (SMOTE and the neural model's stratified early-stopping split
+        # both need two), and a defect to find.
+        if min(y_tr.sum(), len(y_tr) - y_tr.sum()) >= 2 and y_va.any():
             folds.append((tr, va))
     return folds
 
@@ -235,6 +237,8 @@ def tune(base, features, family, seconds: float | None = None, seed: int = 42, *
             try:
                 ap, rec = cv_score(family, params, imbalance, seed, base, features, folds)
             except ValueError:
+                if imbalance == "weight":
+                    raise  # class weighting must always fit; never hide its failure
                 break  # SMOTE impossible on this slice; class weighting stands
             n += 1
             if top is None or ap > top[1]:

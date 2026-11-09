@@ -97,3 +97,14 @@ def test_tune_needs_exactly_one_budget():
         tune(base, FEATS, "lr", seed=1)
     with pytest.raises(ValueError):
         tune(base, FEATS, "lr", 1.0, 1, trials=2)
+
+
+def test_time_folds_skip_a_fold_with_one_defect_to_train_on():
+    # window_1y, apache/groovy (9 Nov 2026): a training chunk with ONE defect broke the neural model's
+    # stratified early-stopping split, and tune() hid the error as "SMOTE impossible".
+    base = synthetic_commits(500).assign(label=False)
+    base.loc[[10, 300, 350, 420, 480], "label"] = True  # chunk 0 holds one defect, later chunks more
+    for tr, _ in time_folds(base):
+        assert base["label"].iloc[tr].sum() >= 2
+    tuned = tune(base, FEATS, "mlp", trials=1, seed=1)
+    assert tuned.trials["weight"] == 1
