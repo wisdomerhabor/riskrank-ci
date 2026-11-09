@@ -148,11 +148,11 @@ def status_css(v) -> str:
     return STATUS_CSS.get(v, "")
 
 
-def risk_column(digits: int = 2, width="medium") -> st.column_config.ProgressColumn:
-    """The calibrated risk as a number with a bar on the fixed 0–1 scale (bars compare across builds)."""
-    return st.column_config.ProgressColumn("Risk score", format=f"%.{digits}f", min_value=0.0, max_value=1.0,
-                                           width=width, help="Calibrated probability that the module or commit is "
-                                                                "defect-prone, on a 0–1 scale")
+def risk_column(digits: int = 2, width="small") -> st.column_config.NumberColumn:
+    """The calibrated risk as a plain number (the progress bar was removed at the student's request, 9 Nov)."""
+    return st.column_config.NumberColumn("Risk score", format=f"%.{digits}f", width=width,
+                                         help="Calibrated probability that the module or commit is defect-prone, "
+                                              "on a 0–1 scale")
 
 
 def build_label(r) -> str:
