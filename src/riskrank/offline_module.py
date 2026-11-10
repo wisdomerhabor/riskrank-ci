@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, matthews_corrcoef, roc_auc_score
 
 from riskrank import registry
 from riskrank.budget import BUDGET, rank, recall_lines
@@ -103,7 +103,11 @@ def main() -> None:
     out = {"created": created, "model": version, "bundle_sha256": meta["bundle_sha256"],
            "pre_registration": oe, "snapshots": list(per_snapshot), "rows": len(test), "defective": int(y.sum()),
            "predictive": {"roc_auc": float(roc_auc_score(y, raw)), "aucpr": float(average_precision_score(y, raw)),
-                          "aucpr_chance": float(y.mean()), "brier": float(brier_score_loss(y, p))},
+                          "aucpr_chance": float(y.mean()), "brier": float(brier_score_loss(y, p)),
+                          # Objective 3's criterion: MCC at the model's own threshold, and the Brier score
+                          # with and without calibration
+                          "brier_uncalibrated": float(brier_score_loss(y, test["p_uncal"].to_numpy())),
+                          "mcc": float(matthews_corrcoef(y, p >= mv.threshold)), "mcc_threshold": float(mv.threshold)},
            "mean_over_snapshots": mean, "per_snapshot": per_snapshot, "effects": effects,
            "random_lines_interval": [float(np.quantile(random_draws, 0.025)), float(np.quantile(random_draws, 0.975))]}
     os.makedirs("runs", exist_ok=True)
