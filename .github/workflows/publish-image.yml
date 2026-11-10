@@ -15,5 +15,20 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          load: true
           tags: ghcr.io/${{ github.repository_owner }}/riskrank-scoring:${{ github.ref_name }}
+      # Smoke test before publishing: the image must load every published model bundle. Added for v0.1.8:
+      # v0.1.7 could not load flask-module-v3 (no pyarrow), and the hook's safe fallback hid it.
+      - name: Load every published model bundle inside the image
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          mkdir -p /tmp/m && cd /tmp/m
+          for r in $(gh release list -R ${{ github.repository }} --json tagName -q '.[].tagName'); do
+            gh release download "$r" -R ${{ github.repository }} -p 'models-*.tar.gz' --skip-existing 2>/dev/null || true
+          done
+          for f in models-*.tar.gz; do tar xzf "$f"; done
+          ls -d */ 
+          docker run --rm -v /tmp/m:/models:ro ghcr.io/${{ github.repository_owner }}/riskrank-scoring:${{ github.ref_name }} \
+            python -c "import glob,joblib; b=sorted(glob.glob('/models/*/bundle.joblib')); assert b, 'no bundles'; [joblib.load(x) or print('loaded', x) for x in b]"
+      - name: Publish
+        run: docker push ghcr.io/${{ github.repository_owner }}/riskrank-scoring:${{ github.ref_name }}
