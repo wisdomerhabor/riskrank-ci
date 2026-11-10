@@ -107,7 +107,8 @@ def main() -> None:
                           # Objective 3's criterion: MCC at the model's own threshold, and the Brier score
                           # with and without calibration
                           "brier_uncalibrated": float(brier_score_loss(y, test["p_uncal"].to_numpy())),
-                          "mcc": float(matthews_corrcoef(y, p >= mv.threshold)), "mcc_threshold": float(mv.threshold)},
+                          "mcc": float(matthews_corrcoef(y, p >= mv.threshold)), "mcc_threshold": float(mv.threshold),
+                          "reliability": reliability(np.asarray(p), y, 10)},
            "mean_over_snapshots": mean, "per_snapshot": per_snapshot, "effects": effects,
            "random_lines_interval": [float(np.quantile(random_draws, 0.025)), float(np.quantile(random_draws, 0.975))]}
     os.makedirs("runs", exist_ok=True)
