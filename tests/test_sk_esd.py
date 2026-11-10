@@ -26,3 +26,10 @@ def test_benchmark_scores_average_each_projects_units_per_family():
                             ("rf", "A", 0.6), ("rf", "B", 0.7), ("rf", "B", 0.9)]]
     rows.append({"corpus": "nasa", "mode": "cross", "family": "lr", "project": "A", "aucpr": 1.0})  # ignored
     assert benchmark_scores(rows, "nasa") == {"lr": [0.30000000000000004, 0.5], "rf": [0.6, 0.8]}
+
+
+def test_benchmark_scores_can_take_the_cross_project_rows():
+    from riskrank.sk_esd import benchmark_scores
+    rows = [{"corpus": "nasa", "mode": m, "family": "lr", "project": "A", "aucpr": v}
+            for m, v in [("within", 0.2), ("cross", 0.9)]]
+    assert benchmark_scores(rows, "nasa", mode="cross") == {"lr": [0.9]}
