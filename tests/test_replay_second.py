@@ -122,3 +122,19 @@ def test_a_teardown_error_does_not_hide_a_call_phase_assertion_failure(tmp_path)
     assert got["test_x.py::test_fails_then_teardown_errors"]["exc"] == "AssertionError"
     assert got["test_x.py::test_passes_then_teardown_errors"]["outcome"] == "error"
     assert run_status(got, ["test_x.py::test_fails_then_teardown_errors"]) == "fail"
+
+
+def test_pessimistic_bound_is_aggregated_for_every_module_ordering():
+    from riskrank.replay_second import summarise
+
+    def res(apfd, papfd):
+        o = {"tf": 1, "apfd": apfd, "apfdc": apfd, "pessimistic": {"tf": 9, "apfd": papfd, "apfdc": papfd}}
+        return {"system": o, "largest_first": o, "recency": o, "random": {"tf": 5, "apfd": 0.5, "apfdc": 0.5}}
+
+    results = [res(0.9, 0.005)] * 11 + [res(0.6, 0.4)]
+    out = summarise([], results, {}, {"second_check": {}})
+    agg = out["aggregate_pessimistic"]
+    assert set(agg) == {"system", "largest_first", "recency"}
+    assert agg["system"]["below_0.01"] == 11
+    assert abs(agg["recency"]["apfd"] - (11 * 0.005 + 0.4) / 12) < 1e-12
+    assert summarise([], results[:11], {}, {"second_check": {}})["aggregate_pessimistic"] is None

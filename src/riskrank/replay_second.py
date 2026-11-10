@@ -578,6 +578,13 @@ def summarise(screened: list[dict], results: list[dict], model_check: dict, cfg:
            "aggregate": None if len(results) < 12 else {
                k: {m: float(np.mean([r[k][m] for r in results])) for m in ("tf", "apfd", "apfdc")}
                for k in ("system", "largest_first", "recency", "random")},
+           # Table 3.10: the pessimistic bound for each module-based ordering, as means and as the number of
+           # defects where it falls below 0.01 (the failing case then runs almost last).
+           "aggregate_pessimistic": None if len(results) < 12 else {
+               k: {"apfd": float(np.mean([r[k]["pessimistic"]["apfd"] for r in results])),
+                   "apfdc": float(np.mean([r[k]["pessimistic"]["apfdc"] for r in results])),
+                   "below_0.01": int(sum(r[k]["pessimistic"]["apfd"] < 0.01 for r in results))}
+               for k in ("system", "largest_first", "recency")},
            "reporting": ("fewer than 12 reproduced defects: each reported individually, no mean, no comparative conclusion"
                          if len(results) < 12 else "12 or more reproduced defects: means over defects reported")}
     return out
