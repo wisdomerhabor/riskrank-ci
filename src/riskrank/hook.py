@@ -78,6 +78,17 @@ def module_features(repo: str, after: str, modules: list[str], months: int, keyw
     return pd.DataFrame(rows, columns=["id", *MODULE_FEATURES])  # a push may touch no module at all
 
 
+def service_detail(e: Exception) -> str:
+    """The service's own reason for an HTTP error (e.g. the model that failed to load), if it gave one."""
+    if not isinstance(e, urllib.error.HTTPError) or e.fp is None:
+        return ""
+    try:
+        detail = json.loads(e.read()).get("detail")
+    except (ValueError, OSError, AttributeError):
+        return ""
+    return f" Service: {detail}" if detail else ""
+
+
 def default_order(out: str, tests: list[str], reason: str, settings_used: dict) -> dict:
     plan = {"format": PLAN_FORMAT, "status": "default order", "reason": reason, "settings": settings_used,
             "tests": [{"test": t, "position": i + 1, "in_budget": False} for i, t in enumerate(tests)]}
@@ -133,7 +144,7 @@ def run(a) -> dict:
                                   for r in mf.itertuples()]}, timeout) if len(mf) else {"scores": [], "model_version": None}
         module_seconds = time.perf_counter() - t0
     except (urllib.error.URLError, TimeoutError, OSError, ValueError, subprocess.CalledProcessError) as e:
-        return default_order(a.out, tests, f"Module scoring failed ({type(e).__name__}: {e}).", s)
+        return default_order(a.out, tests, f"Module scoring failed ({type(e).__name__}: {e}).{service_detail(e)}", s)
 
     scored = pd.DataFrame(resp["scores"])
     if len(scored):

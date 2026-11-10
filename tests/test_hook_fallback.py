@@ -170,3 +170,15 @@ def test_plan_records_when_the_coverage_map_was_made(push, monkeypatch):
     expected = _git(push["repo"], "show", "-s", "--format=%cI", push["before"])
     assert stats["commits_since_map"] == 1 and stats["coverage_map_committed_at"] == expected
     assert stats["coverage_map_collected_at"] == "2026-11-08T20:00:00+00:00"
+
+
+def test_fallback_reason_carries_the_services_own_detail(push, monkeypatch, capsys):
+    detail = json.dumps({"error": "model unavailable",
+                         "detail": "ModuleNotFoundError: No module named 'pyarrow'"}).encode()
+
+    def post(url, body, timeout):
+        raise urllib.error.HTTPError(url, 503, "SERVICE UNAVAILABLE", {}, io.BytesIO(detail))
+    monkeypatch.setattr(hook, "post", post)
+    plan = hook.run(_args(push, _settings(push["tmp"])))
+    _assert_default(plan, push, "Service: ModuleNotFoundError: No module named 'pyarrow'", capsys)
+    assert "pyarrow" in (push["tmp"] / "plan" / "summary.md").read_text()
