@@ -130,12 +130,13 @@ def evaluate_anchor(frame: pd.DataFrame, blamed: set[str], last: dict[str, pd.Ti
     for unit in ("artefacts", "lines"):
         r, share = recall(system, unit, blamed)
         out[f"system_{unit}"], out[f"realised_share_{unit}"] = r, share
-        out[f"recency_{unit}"] = recall(recency, unit, blamed)[0]
+        out[f"recency_{unit}"], out[f"recency_share_{unit}"] = recall(recency, unit, blamed)
     out["largest_first_artefacts"] = recall(largest, "artefacts", blamed)[0]
     out["smallest_first_lines"] = recall(smallest, "lines", blamed)[0]
     # Both size baselines under both budgets (Table 3.11): effect sizes only off their own budget.
-    out["largest_first_lines"] = recall(largest, "lines", blamed)[0]
+    out["largest_first_lines"], out["largest_first_share_lines"] = recall(largest, "lines", blamed)
     out["smallest_first_artefacts"] = recall(smallest, "artefacts", blamed)[0]
+    out["smallest_first_share_lines"] = recall(smallest, "lines", blamed)[1]
     out["chance_artefacts"] = out["realised_share_artefacts"]
     ch = lines_chance(frame, blamed)
     out["chance_lines"], out["chance_lines_interval"], out["chance_lines_method"] = ch["mean"], ch["interval"], ch["method"]
@@ -238,6 +239,12 @@ def main() -> None:
                     "recency_artefacts", "recency_lines"]:
             summary[f"mean_{col}"] = float(df[col].mean())
         summary["blamed_per_anchor"] = df["blamed"].value_counts().sort_index().to_dict()
+        # Section 3.10.3: grouped by the number of scoreable modules, since the realised share depends on it.
+        summary["by_modules"] = {
+            str(n): {"anchors": int(len(g)), **{f"mean_{c}": float(g[c].mean()) for c in
+                     ("system_artefacts", "chance_artefacts", "system_lines", "chance_lines",
+                      "realised_share_artefacts", "realised_share_lines")}}
+            for n, g in df.groupby("modules")}
     out = record | {"candidates": [{"date": str(r["date"]), "training_snapshots": r["training_snapshots"]} for r in table],
                     "inducing_commits_on_or_after_candidate": anchors_on_or_after, "validation_model": model,
                     "anchors_found": len(found), "excluded": excluded, "blamed_files_removed_untouched": files_removed,

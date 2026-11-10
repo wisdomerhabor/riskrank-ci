@@ -41,6 +41,10 @@ def test_one_anchor_worked_by_hand():
     # off-budget size baselines: largest-first lines takes c whole (60 > limit 20) -> 0;
     # smallest-first artefacts picks a -> 0
     assert r["largest_first_lines"] == 0.0 and r["smallest_first_artefacts"] == 0.0
+    # realised line shares per ordering: largest-first marks c only (0.6); smallest-first a+b (0.4);
+    # recency b only (0.3)
+    assert abs(r["largest_first_share_lines"] - 0.6) < 1e-12 and abs(r["smallest_first_share_lines"] - 0.4) < 1e-12
+    assert abs(r["recency_share_lines"] - 0.3) < 1e-12
     # lines chance over all 6 orders (limit 20): b is marked in abc, bac and bca; in acb and cab/cba
     # c is taken first or second and the limit is reached before b -> 3/6
     assert r["chance_lines"] == 0.5 and r["chance_lines_method"] == "every order"
