@@ -585,6 +585,12 @@ def summarise(screened: list[dict], results: list[dict], model_check: dict, cfg:
                    "apfdc": float(np.mean([r[k]["pessimistic"]["apfdc"] for r in results])),
                    "below_0.01": int(sum(r[k]["pessimistic"]["apfd"] < 0.01 for r in results))}
                for k in ("system", "largest_first", "recency")},
+           # Paired positions of the failing case, system against each baseline (lower tf = earlier).
+           "system_vs_baselines": {
+               k: {"earlier": int(sum(r["system"]["tf"] < r[k]["tf"] for r in results)),
+                   "later": int(sum(r["system"]["tf"] > r[k]["tf"] for r in results)),
+                   "same": int(sum(r["system"]["tf"] == r[k]["tf"] for r in results))}
+               for k in ("largest_first", "recency")},
            "reporting": ("fewer than 12 reproduced defects: each reported individually, no mean, no comparative conclusion"
                          if len(results) < 12 else "12 or more reproduced defects: means over defects reported")}
     return out

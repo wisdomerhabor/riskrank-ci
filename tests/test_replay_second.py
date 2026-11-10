@@ -138,3 +138,16 @@ def test_pessimistic_bound_is_aggregated_for_every_module_ordering():
     assert agg["system"]["below_0.01"] == 11
     assert abs(agg["recency"]["apfd"] - (11 * 0.005 + 0.4) / 12) < 1e-12
     assert summarise([], results[:11], {}, {"second_check": {}})["aggregate_pessimistic"] is None
+
+
+def test_system_positions_are_paired_against_each_baseline():
+    from riskrank.replay_second import summarise
+
+    def res(sys_tf, big_tf, rec_tf):
+        o = lambda tf: {"tf": tf, "apfd": 0.5, "apfdc": 0.5, "pessimistic": {"tf": tf, "apfd": 0.5, "apfdc": 0.5}}
+        return {"system": o(sys_tf), "largest_first": o(big_tf), "recency": o(rec_tf),
+                "random": {"tf": 5, "apfd": 0.5, "apfdc": 0.5}}
+
+    out = summarise([], [res(1, 5, 1), res(9, 3, 2), res(4, 4, 8)], {}, {"second_check": {}})
+    assert out["system_vs_baselines"]["largest_first"] == {"earlier": 1, "later": 1, "same": 1}
+    assert out["system_vs_baselines"]["recency"] == {"earlier": 1, "later": 1, "same": 1}
