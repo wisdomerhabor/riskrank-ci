@@ -133,6 +133,9 @@ def evaluate_anchor(frame: pd.DataFrame, blamed: set[str], last: dict[str, pd.Ti
         out[f"recency_{unit}"] = recall(recency, unit, blamed)[0]
     out["largest_first_artefacts"] = recall(largest, "artefacts", blamed)[0]
     out["smallest_first_lines"] = recall(smallest, "lines", blamed)[0]
+    # Both size baselines under both budgets (Table 3.11): effect sizes only off their own budget.
+    out["largest_first_lines"] = recall(largest, "lines", blamed)[0]
+    out["smallest_first_artefacts"] = recall(smallest, "artefacts", blamed)[0]
     out["chance_artefacts"] = out["realised_share_artefacts"]
     ch = lines_chance(frame, blamed)
     out["chance_lines"], out["chance_lines_interval"], out["chance_lines_method"] = ch["mean"], ch["interval"], ch["method"]
@@ -231,7 +234,8 @@ def main() -> None:
             summary[f"difference_from_chance_{unit}"] = {"mean": float(diff.mean()), "sd": float(diff.std(ddof=1)) if len(df) > 1 else None,
                                                          "min": float(diff.min()), "max": float(diff.max())}
         for col in ["system_artefacts", "system_lines", "chance_artefacts", "chance_lines", "largest_first_artefacts",
-                    "smallest_first_lines", "recency_artefacts", "recency_lines"]:
+                    "smallest_first_lines", "largest_first_lines", "smallest_first_artefacts",
+                    "recency_artefacts", "recency_lines"]:
             summary[f"mean_{col}"] = float(df[col].mean())
         summary["blamed_per_anchor"] = df["blamed"].value_counts().sort_index().to_dict()
     out = record | {"candidates": [{"date": str(r["date"]), "training_snapshots": r["training_snapshots"]} for r in table],

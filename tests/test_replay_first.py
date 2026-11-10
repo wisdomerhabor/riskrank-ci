@@ -38,6 +38,9 @@ def test_one_anchor_worked_by_hand():
     assert r["recency_artefacts"] == 1.0
     # largest-first artefacts picks c; smallest-first lines takes a then b
     assert r["largest_first_artefacts"] == 0.0 and r["smallest_first_lines"] == 1.0
+    # off-budget size baselines: largest-first lines takes c whole (60 > limit 20) -> 0;
+    # smallest-first artefacts picks a -> 0
+    assert r["largest_first_lines"] == 0.0 and r["smallest_first_artefacts"] == 0.0
     # lines chance over all 6 orders (limit 20): b is marked in abc, bac and bca; in acb and cab/cba
     # c is taken first or second and the limit is reached before b -> 3/6
     assert r["chance_lines"] == 0.5 and r["chance_lines_method"] == "every order"
