@@ -1,0 +1,17 @@
+# Time the two 5,000-item targets on a GitHub-hosted runner (NFR2, NFR18). Run by hand; stores nothing.
+name: scale-check
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.13"}
+      - run: pip install -e .
+      - run: python -m riskrank.scale_check --repeats 5 --out scale-check.json
+      - run: cat scale-check.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with: {name: scale-check, path: scale-check.json, retention-days: 90}
