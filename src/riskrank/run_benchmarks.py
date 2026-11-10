@@ -508,7 +508,7 @@ def phase_report(out: str, s: dict) -> dict:
             fams = sorted({f for fs in per.values() for f in fs})
             entry = {"per_project": per, "corpus_means": {
                 f: {m: float(np.nanmean([per[p][f]["predictive"][m] for p in per if f in per[p]]))
-                    for m in ("roc_auc", "aucpr", "mcc", "brier_calibrated")}
+                    for m in ("roc_auc", "aucpr", "mcc", "brier_calibrated", "brier_uncalibrated")}
                 | {m: float(np.nanmean([per[p][f]["recall_batch"][m] for p in per if f in per[p]]))
                    for m in ("system_default_lines", "system_default_artefacts", "random_lines", "smallest_first_lines")}
                 for f in fams}}
