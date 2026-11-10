@@ -22,3 +22,14 @@ def test_flask_partitions_follow_the_preregistered_rule():
     assert (test["label"] == test["inducing"]).all()
     span = gap - base["when"].min()
     assert abs((calib["when"].min() - base["when"].min()) / span - 0.8) < 0.02
+
+
+def test_measures_report_mcc_at_the_models_own_threshold():
+    import numpy as np
+    from riskrank.static_vs_process import _measures
+    y = np.array([1, 1, 0, 0, 0, 0])
+    p = np.array([0.9, 0.2, 0.6, 0.1, 0.1, 0.1])
+    m = _measures(y, p, p, threshold=0.5)
+    # predicted positive: rows 0 and 2 -> TP 1, FP 1, FN 1, TN 3; MCC = (3 - 1) / sqrt(2*2*4*4) = 0.25
+    assert abs(m["mcc"] - 0.25) < 1e-12 and m["mcc_threshold"] == 0.5
+    assert "mcc" not in _measures(y, p, p)

@@ -25,10 +25,11 @@ from importlib.metadata import version
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, matthews_corrcoef, roc_auc_score
 import yaml
 
 from riskrank import registry
+from riskrank.evaluate import reliability
 from riskrank.jit_features import FEATURES as CHANGE
 from riskrank.mining.commits import STATIC
 from riskrank.models import FAMILIES, fit_final, tune
@@ -40,12 +41,15 @@ COMMITS = "data/mined/flask/commits.csv"
 JIT_VERSION = "apachejit-jit-v1"
 
 
-def _measures(y: np.ndarray, raw: np.ndarray, p: np.ndarray | None = None) -> dict:
+def _measures(y: np.ndarray, raw: np.ndarray, p: np.ndarray | None = None, threshold: float | None = None) -> dict:
     y = y.astype(bool)
     out = {"n": int(len(y)), "defects": int(y.sum()), "aucpr_chance": float(y.mean()),
            "aucpr": float(average_precision_score(y, raw)), "roc_auc": float(roc_auc_score(y, raw))}
     if p is not None:
         out["brier_calibrated"] = float(brier_score_loss(y, p))
+        if threshold is not None:
+            out["mcc"] = float(matthews_corrcoef(y, np.asarray(p) >= threshold))
+            out["mcc_threshold"] = float(threshold)
     return out
 
 
@@ -68,6 +72,26 @@ def flask_partitions(df: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, pd.Data
     cal_start = first + (gap - first) * 0.8
     base, calib = pre[pre["when"] < cal_start], pre[pre["when"] >= cal_start]
     return base.reset_index(drop=True), calib.reset_index(drop=True), test.reset_index(drop=True)
+
+
+def transfer_check(test: pd.DataFrame) -> dict:
+    """The deployed commit model, unchanged, on the held-out Flask commits (section 3.10.1): ROC-AUC, AUC-PR,
+    MCC at the model's own threshold, the calibrated Brier score and a ten-bin reliability curve."""
+    expected = yaml.safe_load(open("riskrank.yml"))["models"]["commit"]  # the checksum the pipeline trusts
+    assert expected["version"] == JIT_VERSION
+    _meta, mv, _explainer = registry.load(os.path.join("registry", JIT_VERSION), expected["sha256"])
+    p, raw = mv.score(test)
+    y = test["label"].to_numpy().astype(bool)
+    return _measures(y, raw, p, mv.threshold) | {
+        "reliability": reliability(np.asarray(p), y.astype(int), 10),
+        "model": JIT_VERSION, "features": mv.pipeline.features, "refitted": False}
+
+
+def run_transfer() -> dict:
+    cfg = yaml.safe_load(open(FLASK_CFG))["static_vs_process"]
+    df = pd.read_csv(COMMITS, parse_dates=["when", "first_fix"])
+    _base, _calib, test = flask_partitions(df, cfg)
+    return {"transfer_check": transfer_check(test)}
 
 
 def run_flask(seconds: float, seed: int, families: list[str]) -> dict:
@@ -98,13 +122,7 @@ def run_flask(seconds: float, seed: int, families: list[str]) -> dict:
     rep["headline_family"] = max(tuning, key=tuning.get)
     rep["headline_rule"] = "highest tuning AUC-PR on static_process (fixed by the tuning data, not the test data)"
 
-    # Transfer check: the deployed commit model, unchanged, on the same held-out commits.
-    expected = yaml.safe_load(open("riskrank.yml"))["models"]["commit"]  # the checksum the pipeline trusts
-    assert expected["version"] == JIT_VERSION
-    _meta, mv, _explainer = registry.load(os.path.join("registry", JIT_VERSION), expected["sha256"])
-    p, raw = mv.score(test)
-    rep["transfer_check"] = _measures(test["label"].to_numpy(), raw, p) | {
-        "model": JIT_VERSION, "features": mv.pipeline.features, "refitted": False}
+    rep["transfer_check"] = transfer_check(test)
     print("transfer", JIT_VERSION, rep["transfer_check"]["aucpr"], flush=True)
     rep["reporting"] = cfg["reporting"]
     return rep
@@ -137,7 +155,7 @@ def run_groups(run_dir: str, seconds: float, seed: int) -> dict:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["flask", "groups"])
+    ap.add_argument("what", choices=["flask", "groups", "transfer"])
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--families", nargs="+", default=list(FAMILIES))
@@ -145,10 +163,15 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out")
     a = ap.parse_args(argv)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = a.out or os.path.join("runs", ("static_vs_process-" if a.what == "flask" else "metric_groups-") + stamp)
+    prefix = {"flask": "static_vs_process-", "groups": "metric_groups-", "transfer": "transfer_check-"}[a.what]
+    out = a.out or os.path.join("runs", prefix + stamp)
     os.makedirs(out, exist_ok=True)
     settings = {"seconds": a.seconds, "seed": a.seed}
-    if a.what == "flask":
+    if a.what == "transfer":  # no tuning: the deployed model only, so it needs no idle machine
+        man = _manifest("transfer_check", {}, {"commits_csv_sha256": sha256(COMMITS), "config": FLASK_CFG})
+        json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
+        rep = run_transfer()
+    elif a.what == "flask":
         man = _manifest("static_vs_process", settings | {"families": a.families},
                         {"commits_csv_sha256": sha256(COMMITS), "config": FLASK_CFG, "config_sha256": sha256(FLASK_CFG)})
         json.dump(man, open(os.path.join(out, "manifest.json"), "w"), indent=1)
