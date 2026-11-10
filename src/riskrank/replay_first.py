@@ -103,6 +103,13 @@ def recall(ordered: pd.DataFrame, unit: str, blamed: set[str]) -> tuple[float, f
     return found / len(blamed), share
 
 
+def boundary_tie(ordered: pd.DataFrame, unit: str) -> bool:
+    """True when modules with the same score sit on both sides of the budget boundary (section 3.10.3)."""
+    m = mark(ordered, unit, B, "default")
+    inside, outside = set(ordered.loc[m, "p"]), set(ordered.loc[~m, "p"])
+    return bool(inside & outside)
+
+
 def lines_chance(frame: pd.DataFrame, blamed: set[str], seed: int = 0, draws: int = 100) -> dict:
     n = len(frame)
     if n <= 8:
@@ -129,6 +136,7 @@ def evaluate_anchor(frame: pd.DataFrame, blamed: set[str], last: dict[str, pd.Ti
     out = {"modules": len(frame), "blamed": len(blamed)}
     for unit in ("artefacts", "lines"):
         r, share = recall(system, unit, blamed)
+        out[f"boundary_tie_{unit}"] = boundary_tie(system, unit)
         out[f"system_{unit}"], out[f"realised_share_{unit}"] = r, share
         out[f"recency_{unit}"], out[f"recency_share_{unit}"] = recall(recency, unit, blamed)
     out["largest_first_artefacts"] = recall(largest, "artefacts", blamed)[0]
@@ -239,6 +247,7 @@ def main() -> None:
                     "recency_artefacts", "recency_lines"]:
             summary[f"mean_{col}"] = float(df[col].mean())
         summary["blamed_per_anchor"] = df["blamed"].value_counts().sort_index().to_dict()
+        summary["anchors_with_boundary_ties"] = {u: int(df[f"boundary_tie_{u}"].sum()) for u in ("artefacts", "lines")}
         # Section 3.10.3: grouped by the number of scoreable modules, since the realised share depends on it.
         summary["by_modules"] = {
             str(n): {"anchors": int(len(g)), **{f"mean_{c}": float(g[c].mean()) for c in

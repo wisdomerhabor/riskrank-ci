@@ -1,6 +1,6 @@
 import pandas as pd
 
-from riskrank.replay_first import back_to_anchor, candidate_dates, evaluate_anchor, separation_date
+from riskrank.replay_first import back_to_anchor, boundary_tie, candidate_dates, evaluate_anchor, separation_date
 
 t = lambda d: pd.Timestamp(d, tz="UTC")
 
@@ -48,3 +48,12 @@ def test_one_anchor_worked_by_hand():
     # lines chance over all 6 orders (limit 20): b is marked in abc, bac and bca; in acb and cab/cba
     # c is taken first or second and the limit is reached before b -> 3/6
     assert r["chance_lines"] == 0.5 and r["chance_lines_method"] == "every order"
+
+
+def test_boundary_tie_is_found_only_when_equal_scores_straddle_the_budget():
+    from riskrank.budget import rank
+    # five modules, artefact budget ceil(0.2 * 5) = 1: top module a; b has the same score as a
+    tied = pd.DataFrame({"id": list("abcde"), "p": [0.9, 0.9, 0.5, 0.3, 0.1], "raw": [0.0] * 5, "size": [10] * 5})
+    clear = tied.assign(p=[0.9, 0.8, 0.5, 0.3, 0.1])
+    assert boundary_tie(rank(tied, "default"), "artefacts") is True
+    assert boundary_tie(rank(clear, "default"), "artefacts") is False
