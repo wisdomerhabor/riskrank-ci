@@ -93,17 +93,31 @@ def sk_esd(scores: dict[str, list[float]]) -> dict:
             "ranks": {n: i + 1 for i, g in enumerate(merged) for n in g}}
 
 
+def benchmark_scores(rows: list[dict], corpus: str, measure: str = "aucpr") -> dict[str, list[float]]:
+    """Per family, one within-project score per project: the mean over that project's test units
+    (NASA: the 100 cross-validation rounds; PROMISE: its release pairs). Projects are the unit (section 3.10.4)."""
+    acc: dict[str, dict[str, list[float]]] = {}
+    for r in rows:
+        if r["corpus"] == corpus and r["mode"] == "within" and r.get(measure) is not None:
+            acc.setdefault(r["family"], {}).setdefault(r["project"], []).append(float(r[measure]))
+    projects = sorted(set.intersection(*(set(p) for p in acc.values())))
+    return {f: [float(np.mean(acc[f][p])) for p in projects] for f in sorted(acc)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("evaluation")
+    ap.add_argument("evaluation", help="a within-project evaluation.json, or a benchmark scores.jsonl with --corpus")
+    ap.add_argument("--corpus", choices=["nasa", "promise"])
     ap.add_argument("--measure", default="aucpr")
     ap.add_argument("--out")
     a = ap.parse_args()
-    ev = json.load(open(a.evaluation))
-    fams = ev["per_family"]
-    projects = sorted(next(iter(fams.values()))["per_project"])
-    scores = {f: [float(d["per_project"][p]["predictive"][a.measure]) for p in projects] for f, d in fams.items()}
-    out = {"evaluation": a.evaluation, "measure": a.measure} | sk_esd(scores)
+    if a.corpus:
+        scores = benchmark_scores([json.loads(l) for l in open(a.evaluation)], a.corpus, a.measure)
+    else:
+        fams = json.load(open(a.evaluation))["per_family"]
+        projects = sorted(next(iter(fams.values()))["per_project"])
+        scores = {f: [float(d["per_project"][p]["predictive"][a.measure]) for p in projects] for f, d in fams.items()}
+    out = {"evaluation": a.evaluation, "corpus": a.corpus, "measure": a.measure} | sk_esd(scores)
     text = json.dumps(out, indent=1)
     if a.out:
         open(a.out, "w").write(text)
