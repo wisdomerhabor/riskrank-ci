@@ -10,12 +10,12 @@ jobs:
   riskrank:
     runs-on: ubuntu-latest
     env:
-      RISKRANK_REF: v0.1.7                      # riskrank-ci release: code and scoring image
+      RISKRANK_REF: v0.1.8                      # riskrank-ci release: code and scoring image
       MODELS_REF: v0.1.3                        # riskrank-ci release holding the model bundles
       MODELS_DIR: /tmp/riskrank-models          # outside the workspace: checkout must be able to clean it
     services:
       scoring:                                  # job service container, reachable only on the job network (NFR4)
-        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.7
+        image: ghcr.io/wisdomerhabor/riskrank-scoring:v0.1.8
         ports: ["8000:8000"]
         env:
           RISKRANK_MODELS: /models/models.json
