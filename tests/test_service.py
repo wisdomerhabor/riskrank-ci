@@ -116,3 +116,26 @@ def test_neural_reason_codes_are_approximate_but_repeatable(published):
     rows = base.iloc[:3]
     assert ex.reason_codes(rows) == ex.reason_codes(rows)            # same input, same codes
     assert ex.record()["attribution"] == "Kernel SHAP (approximate)"
+
+
+def test_a_model_that_cannot_be_unpickled_fails_alone_and_is_named(published, monkeypatch):
+    # 10 Nov 2026: a bundle needing a library missing from the image (pyarrow) made every request a 500,
+    # the commit model's included. Now the failure stays with its granularity and /health names it.
+    folder, meta, _, _ = published
+    real = registry.load
+
+    def load(f, sha):
+        if f == "broken":
+            raise ModuleNotFoundError("No module named 'pyarrow'")
+        return real(f, sha)
+
+    monkeypatch.setattr(registry, "load", load)
+    app = create_app({"commit": {"folder": folder, "sha256": meta["bundle_sha256"]},
+                      "module": {"folder": "broken", "sha256": "0" * 64}})
+    c = app.test_client()
+    h = c.get("/health")
+    assert h.status_code == 200
+    assert h.get_json()["failures"]["module"] == "ModuleNotFoundError: No module named 'pyarrow'"
+    m = c.post("/score", json={"granularity": "module", "repository": "x", "artefacts": []})
+    assert m.status_code == 503 and "pyarrow" in m.get_json()["detail"]
+    assert c.post("/score", json=body([{f: 1 for f in FEATS}])).status_code == 200

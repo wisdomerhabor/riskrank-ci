@@ -60,8 +60,8 @@ def create_app(models: dict | None = None, token: str | None = None) -> Flask:
             try:
                 loaded[granularity] = registry.load(spec["folder"], spec["sha256"])
                 failures.pop(granularity, None)
-            except (registry.ChecksumMismatch, FileNotFoundError) as e:
-                failures[granularity] = str(e)
+            except Exception as e:  # any load failure is per model: the other granularity keeps serving,
+                failures[granularity] = f"{type(e).__name__}: {e}"  # and /health names the cause
 
     ensure_loaded()
 
