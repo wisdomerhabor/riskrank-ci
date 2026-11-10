@@ -29,3 +29,16 @@ def test_exit_code_is_one_when_any_run_did_not_complete(tmp_path):
     assert main([str(tmp_path)]) == 1
     (tmp_path / "b" / "plan.json").write_text(json.dumps(plan("complete")))
     assert main([str(tmp_path)]) == 0
+
+
+def test_runs_are_grouped_by_settings_and_can_be_filtered(tmp_path):
+    a, b = plan("complete"), plan("complete")
+    b["settings"] = {"models": {"module": {"version": "v3"}}}
+    for k, p in {"1": a, "2": b, "3": plan("partial")}.items():
+        (tmp_path / k).mkdir()
+        (tmp_path / k / "plan.json").write_text(json.dumps(p))
+    out = summarise({"1": a, "2": b})
+    assert sorted(sum(v.values()) for v in out["by_settings"].values()) == [1, 1]
+    keep = tmp_path / "counted.txt"
+    keep.write_text("1\n2\n")
+    assert main([str(tmp_path), "--runs", str(keep)]) == 0  # run 3 is not counted, so it is ignored

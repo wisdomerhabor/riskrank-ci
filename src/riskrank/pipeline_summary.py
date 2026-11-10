@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -23,8 +24,16 @@ from collections import Counter
 import numpy as np
 
 
+def settings_key(plan: dict) -> str:
+    """Short fingerprint of the settings a run used; the criterion counts pushes with settings unchanged."""
+    return hashlib.sha256(json.dumps(plan.get("settings") or {}, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def summarise(plans: dict[str, dict]) -> dict:
     status = Counter(p.get("status") for p in plans.values())
+    by_settings: dict[str, Counter] = {}
+    for p in plans.values():
+        by_settings.setdefault(settings_key(p), Counter())[p.get("status")] += 1
     done = {k: p for k, p in plans.items() if p.get("status") == "complete"}
     hook = [p["timing_seconds"]["hook_total"] for p in done.values() if p.get("timing_seconds")]
     scoring = [p["timing_seconds"]["module_scoring"] for p in done.values() if p.get("timing_seconds")]
@@ -38,6 +47,7 @@ def summarise(plans: dict[str, dict]) -> dict:
                                    "max": float(max(v)), "min": float(min(v))}
 
     return {"runs": len(plans), "status": dict(status), "complete": len(done),
+            "by_settings": {k: dict(v) for k, v in by_settings.items()},
             "not_complete": sorted([k, p.get("status"), p.get("reason", "")] for k, p in plans.items()
                                    if p.get("status") != "complete"),
             "escalated": sum(bool(p.get("escalated")) for p in done.values()),
@@ -55,9 +65,14 @@ def load(folder: str) -> dict[str, dict]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("plans")
+    ap.add_argument("--runs", help="file listing the counted run ids, one per line (others are ignored)")
     ap.add_argument("--out")
     a = ap.parse_args(argv)
-    out = summarise(load(a.plans))
+    plans = load(a.plans)
+    if a.runs:
+        keep = {line.split()[0] for line in open(a.runs) if line.strip()}
+        plans = {k: v for k, v in plans.items() if k in keep}
+    out = summarise(plans)
     text = json.dumps(out, indent=1)
     if a.out:
         open(a.out, "w").write(text)
