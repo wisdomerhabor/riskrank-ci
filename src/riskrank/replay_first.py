@@ -247,6 +247,10 @@ def main() -> None:
                     "recency_artefacts", "recency_lines"]:
             summary[f"mean_{col}"] = float(df[col].mean())
         summary["blamed_per_anchor"] = df["blamed"].value_counts().sort_index().to_dict()
+        # Each anchor's system lines recall against its own lines-chance interval (2.5 to 97.5 percent).
+        pos = df.apply(lambda r: "below" if r["system_lines"] < r["chance_lines_interval"][0] else
+                       ("above" if r["system_lines"] > r["chance_lines_interval"][1] else "within"), axis=1)
+        summary["system_lines_vs_chance_interval"] = {k: int((pos == k).sum()) for k in ("below", "within", "above")}
         summary["anchors_with_boundary_ties"] = {u: int(df[f"boundary_tie_{u}"].sum()) for u in ("artefacts", "lines")}
         # Section 3.10.3: grouped by the number of scoreable modules, since the realised share depends on it.
         summary["by_modules"] = {

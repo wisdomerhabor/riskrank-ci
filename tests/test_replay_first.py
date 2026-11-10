@@ -57,3 +57,10 @@ def test_boundary_tie_is_found_only_when_equal_scores_straddle_the_budget():
     clear = tied.assign(p=[0.9, 0.8, 0.5, 0.3, 0.1])
     assert boundary_tie(rank(tied, "default"), "artefacts") is True
     assert boundary_tie(rank(clear, "default"), "artefacts") is False
+
+
+def test_one_anchor_lies_within_its_lines_chance_interval():
+    f = pd.DataFrame({"id": ["a", "b", "c"], "p": [0.9, 0.5, 0.1], "raw": [0.0] * 3, "size": [10, 30, 60]})
+    r = evaluate_anchor(f, {"b"}, {"a": t("2020-01-01"), "b": t("2020-06-01"), "c": None})
+    # every-order chance for this anchor runs from 0 to 1, so recall 1.0 is inside it
+    assert r["chance_lines_interval"] == [0.0, 1.0] and r["system_lines"] == 1.0
