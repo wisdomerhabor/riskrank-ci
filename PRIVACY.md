@@ -23,7 +23,8 @@ The personal data it draws from them is limited to:
 - the developer metrics derived from them: the experience measures and the count of developers who
   previously changed the modified files;
 - any names in commit messages, which are read for fix keywords;
-- the usernames in linked issues.
+- linked issue records, of which only the number, title, labels, creation date and pull-request flag
+  are kept (no usernames).
 
 The experience measures and developer counts published in the ApacheJIT dataset contain no author
 identifier, but they can be linked to public commits, so the project treats them as personal data too.
@@ -73,11 +74,12 @@ histories and reports no results by developer, so no data privacy impact assessm
 
 ## What is published, and what is withheld
 
-Published: the source code, mining and labelling scripts, settings files, run records, the identifiers
-of the Flask commits mined, the batch boundaries for each deployment push, the list of bug-fixing
+Published: the source code, mining and labelling scripts, settings files, run records, the batch boundaries for each deployment push, the list of bug-fixing
 commits used for labelling, the mined module-level metrics with their labels, the trained model files
 and the aggregate results. The model files and their background data hold fitted parameters, cluster
 centres and summary statistics, not individual records.
+
+In the published bounded-check results, upstream commit identifiers are replaced with case numbers.
 
 Withheld: the mined commit-level records, the developer metrics, the rebuilt ApacheJIT partitions and
 the walkthrough records. The project withholds records that link developers to defects. Commit-level

@@ -346,6 +346,9 @@ Attached to release `v1.0.0`, with a `SHA256SUMS` file:
   - `offline_flask-module-v2.json`, `offline_flask-module-v3.json`: offline evaluation of the Flask models
   - `first_check.json`, `first_check_date.json`: first bounded check and its separation date
   - `second_check/combined-42622799420/second_check.json`: second bounded check
+  - in both bounded-check files the upstream Flask commit identifiers are replaced with case numbers
+    (`anchor-01`, `defect-01-fix` and so on), because they would link defects to developers; rebuild
+    them with the commands above to recover the identifiers
   - `pipeline-checks/flask-v3-replay-summary.json`, `replay-v3.jsonl`: the 34-push Flask replay
     summary and its batch boundaries
   - `leakage-check.json`: the leakage check on the mined corpus
