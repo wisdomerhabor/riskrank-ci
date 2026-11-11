@@ -98,7 +98,7 @@ workflows that run on GitHub do so with GitHub as the author's processor.
 
 | Data | Kept until |
 |---|---|
-| Clones of the mined repositories | Deleted once mining and labelling are complete. They can be cloned again from the recorded commits. |
+| Clones of the mined repositories (Flask and ZooKeeper) | Deleted with the local data, within 30 days after the university confirms the final project result. They can be cloned again from the recorded commits. |
 | Developer metrics and mined commit-level records on the author's workstation | Deleted within 30 days after the university confirms the final project result. |
 | The downloaded ApacheJIT file and rebuilt partitions | Deleted with the local data. |
 | Author identifiers in a CI run | Until the job ends. |
