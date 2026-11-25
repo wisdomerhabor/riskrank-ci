@@ -38,4 +38,3 @@ def _jsonl(plan_dir: str, name: str, ids: list[str]) -> str:
 
 if __name__ == "__main__":
     sys.exit(main())
-# RiskRank demo
