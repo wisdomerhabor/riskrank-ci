@@ -153,3 +153,4 @@ def random_recall(
     rng = np.random.default_rng(seed)
     vals = [recall_lines(frame.iloc[rng.permutation(n)], label, size, b) for _ in range(draws)]
     return float(np.mean(vals))
+# RiskRank demo
